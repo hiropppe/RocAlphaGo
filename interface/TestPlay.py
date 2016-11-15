@@ -69,9 +69,9 @@ class play_match(object):
                 if i in (0, self.state.size + 1) and j in (0, self.state.size + 1):
                     ch = ' '
                 elif i in (0, self.state.size + 1):
-                    ch = AXISS[j-1]
+                    ch = AXIS[j-1]
                 elif j in (0, self.state.size + 1):
-                    ch = AXISS[i-1]
+                    ch = AXIS[i-1]
                 elif self.state.board[j-1][i-1] == 1:
                     if self.state.history[-1][0] == j-1 and self.state.history[-1][1] == i-1:
                         ch = 'x'
@@ -92,8 +92,8 @@ class play_match(object):
 
             if i == 1 and self.state.history:
                 board.append('    ;{}({}{})'.format('W' if self.state.current_player == 1 else 'B',
-                                                    AXISS[self.state.history[-1][0]],
-                                                    AXISS[self.state.history[-1][1]]))
+                                                    AXIS[self.state.history[-1][0]],
+                                                    AXIS[self.state.history[-1][1]]))
 
             board.append('\n')
 
