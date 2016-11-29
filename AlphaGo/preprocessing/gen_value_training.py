@@ -6,6 +6,8 @@ import h5py
 import numpy as np
 import os
 import warnings
+import sys
+import traceback
 
 from tqdm import tqdm
 
@@ -111,11 +113,15 @@ def play_batch(player_RL, player_SL, batch_size, features):
         done = [st.is_end_of_game or len(st.history) > 500 for st in states]
         if all(done):
             break
-    # Concatenate training examples
-    X = convert(X_list, preprocessor)
-    winners = np.array([st.get_winner() for st in states]).reshape(batch_size, 1)
-    return X, winners
 
+    if X_list:
+        # Concatenate training examples
+        X = convert(X_list, preprocessor)
+        winners = np.array([st.get_winner() for st in states]).reshape(batch_size, 1)
+        return X, winners
+    else:
+        # All game have ended before sampling
+        return None, None
 
 def run(player_RL, player_SL, hdf5_file, n_training_pairs, batch_size, bd_size, features):
     global p_bar
@@ -164,6 +170,7 @@ def run(player_RL, player_SL, hdf5_file, n_training_pairs, batch_size, bd_size, 
             if n_pairs >= n_training_pairs / batch_size:
                 break
     except Exception as e:
+        sys.stderr.write(traceback.format_exc())
         os.remove(tmp_file)
         raise e
 
