@@ -93,16 +93,25 @@ def run_training(cmd_line_args=None):
     parser.add_argument("train_data", help="A .h5 file of training data")
     parser.add_argument("out_directory", help="directory where metadata and weights will be saved")
     # frequently used args
-    parser.add_argument("--minibatch", "-B", help="Size of training data minibatches. Default: 16", type=int, default=16)
-    parser.add_argument("--epochs", "-E", help="Total number of iterations on the data. Default: 10", type=int, default=10)
-    parser.add_argument("--epoch-length", "-l", help="Number of training examples considered 'one epoch'. Default: # training data", type=int, default=None)
-    parser.add_argument("--learning-rate", "-r", help="Learning rate - how quickly the model learns at first. Default: .03", type=float, default=.03)
-    parser.add_argument("--decay", "-d", help="The rate at which learning decreases. Default: .0001", type=float, default=.0001)
-    parser.add_argument("--workers", "-w", help="Number of 'workers' workon on batch generator in parallel. Default: 4", type=int, default=4)
-    parser.add_argument("--verbose", "-v", help="Turn on verbose mode", default=False, action="store_true")
+    parser.add_argument("--minibatch", "-B",
+                        help="Size of training data minibatches. Default: 16", type=int, default=16)
+    parser.add_argument(
+        "--epochs", "-E", help="Total number of iterations on the data. Default: 10", type=int, default=10)
+    parser.add_argument("--epoch-length", "-l",
+                        help="Number of training examples considered 'one epoch'. Default: # training data", type=int, default=None)
+    parser.add_argument("--learning-rate", "-r",
+                        help="Learning rate - how quickly the model learns at first. Default: .03", type=float, default=.03)
+    parser.add_argument(
+        "--decay", "-d", help="The rate at which learning decreases. Default: .0001", type=float, default=.0001)
+    parser.add_argument(
+        "--workers", "-w", help="Number of 'workers' workon on batch generator in parallel. Default: 1", type=int, default=1)
+    parser.add_argument("--verbose", "-v", help="Turn on verbose mode",
+                        default=False, action="store_true")
     # slightly fancier args
-    parser.add_argument("--weights", help="Name of a .h5 weights file (in the output directory) to load to resume training", default=None)
-    parser.add_argument("--train-val-test", help="Fraction of data to use for training/val/test. Must sum to 1. Invalid if restarting training", nargs=3, type=float, default=[0.93, .05, .02])
+    parser.add_argument(
+        "--weights", help="Name of a .h5 weights file (in the output directory) to load to resume training", default=None)
+    parser.add_argument("--train-val-test", help="Fraction of data to use for training/val/test. Must sum to 1. Invalid if restarting training",
+                        nargs=3, type=float, default=[0.93, .05, .02])
     # TODO - an argument to specify which transformations to use, put it in metadata
 
     if cmd_line_args is None:
@@ -128,11 +137,12 @@ def run_training(cmd_line_args=None):
     if resume:
         model.load_weights(os.path.join(args.out_directory, args.weights))
 
-    # TODO - (waiting on game_converter) verify that features of model match features of training data
+    # TODO - (waiting on game_converter) verify that features of model match
+    # features of training data
     dataset = h5.File(args.train_data)
     n_total_data = len(dataset["states"])
-    n_train_data = np.floor(args.train_val_test[0] * n_total_data)
-    n_val_data = np.floor(args.train_val_test[1] * n_total_data)
+    n_train_data = np.floor(args.train_val_test[0] * n_total_data).astype(np.int32)
+    n_val_data = np.floor(args.train_val_test[1] * n_total_data).astype(np.int32)
     # n_test_data = n_total_data - (n_train_data + n_val_data)
 
     if args.verbose:
@@ -157,7 +167,8 @@ def run_training(cmd_line_args=None):
     elif args.verbose:
         print "starting with empty metadata"
     # the MetadataWriterCallback only sets 'epoch' and 'best_epoch'. We can add in anything else we like here
-    # TODO - model and train_data are saved in meta_file; check that they match (and make args optional when restarting?)
+    # TODO - model and train_data are saved in meta_file; check that they
+    # match (and make args optional when restarting?)
     meta_writer.metadata["training_data"] = args.train_data
     meta_writer.metadata["model_file"] = args.model
 
@@ -181,7 +192,8 @@ def run_training(cmd_line_args=None):
             np.save(f, shuffle_indices)
         if args.verbose:
             print "created new data shuffling indices"
-    # training indices are the first consecutive set of shuffled indices, val next, then test gets the remainder
+    # training indices are the first consecutive set of shuffled indices, val
+    # next, then test gets the remainder
     train_indices = shuffle_indices[0:n_train_data]
     val_indices = shuffle_indices[n_train_data:n_train_data + n_val_data]
     # test_indices = shuffle_indices[n_train_data + n_val_data:]
@@ -201,7 +213,7 @@ def run_training(cmd_line_args=None):
         BOARD_TRANSFORMATIONS)
 
     sgd = SGD(lr=args.learning_rate, decay=args.decay)
-    model.compile(loss='mean_squared_error', optimizer=sgd)
+    model.compile(loss='mean_squared_error', optimizer=sgd, metrics=['accuracy'])
 
     samples_per_epoch = args.epoch_length or n_train_data
 
@@ -215,7 +227,6 @@ def run_training(cmd_line_args=None):
         callbacks=[checkpointer, meta_writer],
         validation_data=val_data_generator,
         nb_val_samples=n_val_data or 1,  # Temporary hack
-        show_accuracy=True,
         nb_worker=args.workers)
 
 if __name__ == '__main__':
