@@ -100,13 +100,15 @@ class ProbabilisticPolicyPlayer(object):
 
 class MCTSPlayer(object):
     def __init__(self, value_function, policy_function, rollout_function, lmbda=.5, c_puct=5,
-                 rollout_limit=500, playout_depth=40, n_playout=100):
+                 rollout_limit=500, n_playout=100):
         self.mcts = mcts.MCTS(value_function, policy_function, rollout_function, lmbda, c_puct,
-                              rollout_limit, playout_depth, n_playout)
+                              rollout_limit, n_playout)
 
     def get_move(self, state):
         sensible_moves = [move for move in state.get_legal_moves(include_eyes=False)]
         if len(sensible_moves) > 0:
+            if len(state.history) > 0:
+                self.mcts.update_with_move(state.history[-1])
             move = self.mcts.get_move(state)
             self.mcts.update_with_move(move)
             return move
