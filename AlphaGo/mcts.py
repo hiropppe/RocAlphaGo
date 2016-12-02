@@ -5,7 +5,10 @@ game of Go; everything in this file is implemented generically with respect to s
 policy function, and value function.
 """
 import numpy as np
+
 from operator import itemgetter
+
+import AlphaGo.go as go
 
 
 class TreeNode(object):
@@ -16,12 +19,16 @@ class TreeNode(object):
     def __init__(self, parent, prior_p):
         self._parent = parent
         self._children = {}  # a map from action to TreeNode
-        self._n_visits = 0
         self._Q = 0
         # This value for u will be overwritten in the first call to update(), but is useful for
         # choosing the first action from this node.
         self._u = prior_p
         self._P = prior_p
+        self._v = 0
+        self._Nr = 0
+        self._Nv = 0
+        self._Wr = 0
+        self._Wv = 0
 
     def expand(self, action_priors):
         """Expand tree by creating new children.
@@ -45,7 +52,7 @@ class TreeNode(object):
         """
         return max(self._children.iteritems(), key=lambda act_node: act_node[1].get_value())
 
-    def update(self, leaf_value, c_puct):
+    def update(self, v, z, lmbda, c_puct):
         """Update node values from leaf evaluation.
 
         Arguments:
@@ -57,15 +64,20 @@ class TreeNode(object):
         None
         """
         # Count visit.
-        self._n_visits += 1
+        self._Nr += 1
+        self._Wr += z
+        # Count value evalation.
+        if v:
+            self._Nv += 1
+            self._Wv += v
         # Update Q, a running average of values for all visits.
-        self._Q += (leaf_value - self._Q) / self._n_visits
+        self._Q += (1-lmbda) * self._Wv/self._Nv + lmbda * self._Wr/self._Nr
         # Update u, the prior weighted by an exploration hyperparameter c_puct and the number of
         # visits. Note that u is not normalized to be a distribution.
         if not self.is_root():
-            self._u = c_puct * self._P * np.sqrt(self._parent._n_visits) / (1 + self._n_visits)
+            self._u = c_puct * self._P * np.sqrt(self._parent._Nr) / (1 + self._Nr)
 
-    def update_recursive(self, leaf_value, c_puct):
+    def update_recursive(self, v, z, lmbda, c_puct):
         """Like a call to update(), but applied recursively for all ancestors.
 
         Note: it is important that this happens from the root downward so that 'parent' visit
@@ -73,8 +85,8 @@ class TreeNode(object):
         """
         # If it is not root, this node's parent should be updated first.
         if self._parent:
-            self._parent.update_recursive(leaf_value, c_puct)
-        self.update(leaf_value, c_puct)
+            self._parent.update_recursive(v, z, lmbda, c_puct)
+        self.update(v, z, lmbda, c_puct)
 
     def get_value(self):
         """Calculate and return the value for this node: a combination of leaf evaluations, Q, and
@@ -107,7 +119,7 @@ class MCTS(object):
     """
 
     def __init__(self, value_fn, policy_fn, rollout_policy_fn, lmbda=0.5, c_puct=5,
-                 rollout_limit=500, playout_depth=20, n_playout=10000):
+                 rollout_limit=500, n_playout=10000, n_expand_threshold=2):
         """Arguments:
         value_fn -- a function that takes in a state and ouputs a score in [-1, 1], i.e. the
             expected value of the end game score from the current player's perspective.
@@ -128,10 +140,10 @@ class MCTS(object):
         self._lmbda = lmbda
         self._c_puct = c_puct
         self._rollout_limit = rollout_limit
-        self._L = playout_depth
         self._n_playout = n_playout
+        self._n_expand_threshold = n_expand_threshold
 
-    def _playout(self, state, leaf_depth):
+    def _playout(self, state):
         """Run a single playout from the root to the given depth, getting a value at the leaf and
         propagating it back through its parents. State is modified in-place, so a copy must be
         provided.
@@ -144,41 +156,52 @@ class MCTS(object):
         None
         """
         node = self._root
-        for i in range(leaf_depth):
-            # Only expand node if it has not already been done. Existing nodes already know their
-            # prior.
+        # Memorize this mcts player for evaluate winner
+        player = state.get_current_player()
+        while True:
             if node.is_leaf():
-                action_probs = self._policy(state)
-                # Check for end of game.
-                if len(action_probs) == 0:
-                    break
-                node.expand(action_probs)
-            # Greedily select next move.
-            action, node = node.select()
-            state.do_move(action)
+                # When visit count exceeds a threshold the successor state is added to the search
+                # tree.
+                if self._n_expand_threshold <= node._Nr:
+                    action_probs = self._policy(state)
+                    # Check for end of game.
+                    if len(action_probs) == 0:
+                        break
+                    node.expand(action_probs)
+                break
+            else:
+                # Greedily select next move.
+                action, node = node.select()
+                state.do_move(action)
 
-        # Evaluate the leaf using a weighted combination of the value network, v, and the game's
-        # winner, z, according to the rollout policy. If lmbda is equal to 0 or 1, only one of
-        # these contributes and the other may be skipped. Both v and z are from the perspective
-        # of the current player (+1 is good, -1 is bad).
-        v = self._value(state) if self._lmbda < 1 else 0
-        z = self._evaluate_rollout(state, self._rollout_limit) if self._lmbda > 0 else 0
-        leaf_value = (1 - self._lmbda) * v + self._lmbda * z
+        # The leaf state evaluated by value network, unless it has previously been evaluated,
+        # and the game's winner according to the rollout policy.
+        # If lmbda is equal to 0 or 1, only one of these contributes and the other may be skipped.
+        # Both v and z are from the perspective of the current player (+1 is good, -1 is bad).
+        if node._v:
+            v = 0.
+        else:
+            node._v = v = float(self._value(state)) if self._lmbda < 1 else 0.
+
+        z = self._evaluate_rollout(state, player, self._rollout_limit) if self._lmbda > 0 else 0
 
         # Update value and visit count of nodes in this traversal.
-        node.update_recursive(leaf_value, self._c_puct)
+        node.update_recursive(v, z, self._lmbda, self._c_puct)
 
-    def _evaluate_rollout(self, state, limit):
+    def _evaluate_rollout(self, state, player, limit):
         """Use the rollout policy to play until the end of the game, returning +1 if the current
         player wins, -1 if the opponent wins, and 0 if it is a tie.
         """
-        player = state.get_current_player()
         for i in range(limit):
             action_probs = self._rollout(state)
-            if len(action_probs) == 0:
+            if action_probs:
+                max_action = max(action_probs, key=itemgetter(1))[0]
+                state.do_move(max_action)
+            else:
+                state.do_move(go.PASS_MOVE)
+
+            if state.is_end_of_game:
                 break
-            max_action = max(action_probs, key=itemgetter(1))[0]
-            state.do_move(max_action)
         else:
             # If no break from the loop, issue a warning.
             print("WARNING: rollout reached move limit")
@@ -197,13 +220,18 @@ class MCTS(object):
         Returns:
         the selected action
         """
+
+        # Expand only when starting on leaf node
+        if self._root.is_leaf():
+            self._root.expand(self._policy(state))
+
         for n in range(self._n_playout):
             state_copy = state.copy()
-            self._playout(state_copy, self._L)
+            self._playout(state_copy)
 
         # chosen action is the *most visited child*, not the highest-value one
         # (they are the same as self._n_playout gets large).
-        return max(self._root._children.iteritems(), key=lambda act_node: act_node[1]._n_visits)[0]
+        return max(self._root._children.iteritems(), key=lambda act_node: act_node[1]._Nr)[0]
 
     def update_with_move(self, last_move):
         """Step forward in the tree, keeping everything we already know about the subtree, assuming
