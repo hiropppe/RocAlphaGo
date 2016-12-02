@@ -195,8 +195,12 @@ class MCTS(object):
         for i in range(limit):
             action_probs = self._rollout(state)
             if action_probs:
-                max_action = max(action_probs, key=itemgetter(1))[0]
-                state.do_move(max_action)
+                # Rollout policy is not implemented yet.
+                # Choice action probabilistically with SL policy network instead.
+                probs = np.array(action_probs[1])
+                probs /= probs.sum()
+                choice_action = np.random.choice(len(action_probs[0]), p=probs)
+                state.do_move(action_probs[0][choice_action])
             else:
                 state.do_move(go.PASS_MOVE)
 
