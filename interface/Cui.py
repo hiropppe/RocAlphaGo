@@ -1,5 +1,6 @@
 """Interface for AlphaGo self-play"""
 import numpy as np
+import sys
 
 from AlphaGo.go import GameState
 
@@ -22,7 +23,6 @@ class play_match(object):
         self.state = GameState(size=size)
         self.current = self.player1
         self.opponent = self.player2
-        self.playout = False
         # I Propose that GameState should take a top-level save directory,
         # then automatically generate the specific file name
 
@@ -31,51 +31,58 @@ class play_match(object):
         # TODO: Fix is_eye?
         self.state.do_move(move)  # Return max prob sensible legal move
         # self.state.write_to_disk()
-        if len(self.state.history) > 1:
-            if self.state.history[-1] is None and self.state.history[-2] is None \
-                    and self.state.current_player == WHITE:
-                end_of_game = True
-            else:
-                end_of_game = False
-        else:
-            end_of_game = False
-
-        if end_of_game:
-            self.playout = True
-        else:
+        if not self.state.is_end_of_game:
             self.current, self.opponent = self.opponent, self.current
 
-        return end_of_game
+        return self.state.is_end_of_game
 
     def clear(self, showboard=True):
         self.state = GameState(size=self.state.size)
-        self.playout = False
 
         if showboard:
             self.showboard()
 
     def play(self, showboard=True):
         """ Play by current player """
-        if not self.playout:
+        if not self.state.is_end_of_game:
             self._play()
 
         if showboard:
             self.showboard()
 
-        return self.playout
+        return self.state.is_end_of_game
 
-    def playover(self, turn=300, showboard=True):
-        """Play one turn, update game state, save to disk"""
-        if not self.playout:
-            for i in xrange(turn*2):
-                self._play()
-                if self.playout:
-                    break
+    def playeach(self, turn=1, showboard=True):
+        """ Play each other """
+        if self.state.is_end_of_game:
+            return True
+
+        for i in xrange(turn*2):
+            self._play()
+            if self.state.is_end_of_game:
+                break
 
         if showboard:
             self.showboard()
 
-        return self.playout
+        return self.state.is_end_of_game
+
+    def playout(self, limit=500, showboard=True):
+        """ Playout """
+        if self.state.is_end_of_game:
+            return True
+
+        for i in range(limit):
+            self._play()
+            if self.state.is_end_of_game:
+                break
+        else:
+            sys.stderr.write('{}\n'.format('WARNING: rollout reached move limit'))
+
+        if showboard:
+            self.showboard()
+
+        return self.state.is_end_of_game
 
     def showboard(self):
         """
@@ -122,13 +129,13 @@ class play_match(object):
 
             if i == 1 and self.state.history:
                 if self.state.history[-1]:
-                    board.append('    ;{}({}{})'.format('W' if self.state.current_player == 1 and not self.playout else 'B',
+                    board.append('    ;{}({}{})'.format('W' if self.state.current_player == 1 and not self.state.is_end_of_game else 'B',
                                                         AXIS[self.state.history[-1][0]],
                                                         AXIS[self.state.history[-1][1]]))
                 else:
-                    board.append('    ;{}(tt)'.format('W' if self.state.current_player == 1 and not self.playout else 'B'))
+                    board.append('    ;{}(tt)'.format('W' if self.state.current_player == 1 and not self.state.is_end_of_game else 'B'))
 
-            if i == 3 and self.playout:
+            if i == 3 and self.state.is_end_of_game:
                 score_white, score_black = self.calculate_score()
                 board.append('    ' + ('Draw' if not self.state.get_winner() else 'Winner: {}'.format(RESULT[self.state.get_winner()])))
                 board.append(' (W: {}, B: {})'.format(score_white, score_black))
