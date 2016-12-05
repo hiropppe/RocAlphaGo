@@ -165,7 +165,7 @@ class MCTS(object):
                 if self._n_expand_threshold <= node._Nr:
                     action_probs = self._policy(state)
                     # Check for end of game.
-                    if len(action_probs) == 0:
+                    if action_probs and len(action_probs) == 0:
                         break
                     node.expand(action_probs)
                 break
