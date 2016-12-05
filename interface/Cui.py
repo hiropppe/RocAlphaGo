@@ -9,7 +9,7 @@ WHITE = -1
 BLACK = +1
 EMPTY = 0
 
-AXIS = 'abcdefghijklmnopqrs'
+AXIS = 'abcdefghjklmnopqrst'
 RESULT = 'DBW'
 
 
@@ -86,56 +86,64 @@ class play_match(object):
 
     def showboard(self):
         """
-           a b c d e f g
-         a . . . . . . . a     ;W(bb)
-         b . W . . . . . b
-         c . . . x . . . c
-         d . . . . . . . d
-         e . . o . x . . e
-         f . . . . . . . f
-         g . . . . . . . g
-           a b c d e f g
+           A B C D E F G
+         7 . . . . . . . 7     ;W(B6)
+         6 .(o). . . . . 6
+         5 . . . x . . . 5
+         4 . . . . . . . 4
+         3 . . o . x . . 3
+         2 . . . . . . . 2
+         1 . . . . . . . 1
+           A B C D E F G
         """
-        board = []
-        for i in xrange(self.state.size + 2):
+        board = ['\n']
+        for i in [_i for _i in xrange(self.state.size + 2)][::-1]:
             for j in xrange(self.state.size + 2):
+                is_last_stone = False
                 if i in (0, self.state.size + 1) and j in (0, self.state.size + 1):
-                    ch = ' '
+                    ch = '  '
                 elif i in (0, self.state.size + 1):
-                    ch = AXIS[j-1]
-                elif j in (0, self.state.size + 1):
-                    ch = AXIS[i-1]
+                    ch = AXIS[j-1].upper()
+                elif j == 0:
+                    ch = (str)(i).rjust(2)
+                elif j == self.state.size + 1:
+                    ch = (str)(i).ljust(2)
                 elif self.state.board[j-1][i-1] == 1:
                     if self.state.history[-1] \
                        and self.state.history[-1][0] == j-1 \
                        and self.state.history[-1][1] == i-1:
-                        ch = 'B'
+                        board = board[:-1]
+                        is_last_stone = True
+                        ch = '(X)'
                     else:
-                        ch = 'x'
+                        ch = 'X'
                 elif self.state.board[j-1][i-1] == -1:
                     if self.state.history[-1] \
                        and self.state.history[-1][0] == j-1 \
                        and self.state.history[-1][1] == i-1:
-                        ch = 'W'
+                        board = board[:-1]
+                        is_last_stone = True
+                        ch = '(O)'
                     else:
-                        ch = 'o'
+                        ch = 'O'
                 elif self.state.size == 19 and (i-1 in (3, 9, 15)) and (j-1 in (3, 9, 15)):
                     ch = '+'
                 else:
                     ch = '.'
 
                 board.append(ch)
-                board.append(' ')
+                if not is_last_stone:
+                    board.append(' ')
 
-            if i == 1 and self.state.history:
+            if i == 19 and self.state.history:
                 if self.state.history[-1]:
                     board.append('    ;{}({}{})'.format('W' if self.state.current_player == 1 and not self.state.is_end_of_game else 'B',
-                                                        AXIS[self.state.history[-1][0]],
-                                                        AXIS[self.state.history[-1][1]]))
+                                                        AXIS[self.state.history[-1][0]].upper(),
+                                                        (str)(self.state.history[-1][1]+1)))
                 else:
                     board.append('    ;{}(tt)'.format('W' if self.state.current_player == 1 and not self.state.is_end_of_game else 'B'))
 
-            if i == 3 and self.state.is_end_of_game:
+            if i == 17 and self.state.is_end_of_game:
                 score_white, score_black = self.calculate_score()
                 board.append('    ' + ('Draw' if not self.state.get_winner() else 'Winner: {}'.format(RESULT[self.state.get_winner()])))
                 board.append(' (W: {}, B: {})'.format(score_white, score_black))
