@@ -1,8 +1,14 @@
 import sys
 import multiprocessing
-import gtp
+
+from interface import gtp
+
 from AlphaGo import go
 from AlphaGo.util import save_gamestate_to_sgf
+
+
+AXIS = 'abcdefghjklmnopqrst'
+RESULT = 'DBW'
 
 
 def run_gnugo(sgf_file_name, command):
@@ -130,6 +136,74 @@ class GTPGameConnector(object):
             (x, y) = vertex
             actions.append((x - 1, y - 1))
         self._state.place_handicaps(actions)
+
+    def showboard(self):
+        """
+           A B C D E F G
+         7 . . . . . . . 7     ;W(B6)
+         6 .(O). . . . . 6
+         5 . . . X . . . 5
+         4 . . . . . . . 4
+         3 . . O . X . . 3
+         2 . . . . . . . 2
+         1 . . . . . . . 1
+           A B C D E F G
+        """
+        board = ['\n']
+        for i in [_i for _i in xrange(self._state.size + 2)][::-1]:
+            for j in xrange(self._state.size + 2):
+                is_last_stone = False
+                if i in (0, self._state.size + 1) and j in (0, self._state.size + 1):
+                    ch = '  '
+                elif i in (0, self._state.size + 1):
+                    ch = AXIS[j-1].upper()
+                elif j == 0:
+                    ch = (str)(i).rjust(2)
+                elif j == self._state.size + 1:
+                    ch = (str)(i).ljust(2)
+                elif self._state.board[j-1][i-1] == 1:
+                    if self._state.history[-1] \
+                       and self._state.history[-1][0] == j-1 \
+                       and self._state.history[-1][1] == i-1:
+                        board = board[:-1]
+                        is_last_stone = True
+                        ch = '(X)'
+                    else:
+                        ch = 'X'
+                elif self._state.board[j-1][i-1] == -1:
+                    if self._state.history[-1] \
+                       and self._state.history[-1][0] == j-1 \
+                       and self._state.history[-1][1] == i-1:
+                        board = board[:-1]
+                        is_last_stone = True
+                        ch = '(O)'
+                    else:
+                        ch = 'O'
+                elif self._state.size == 19 and (i-1 in (3, 9, 15)) and (j-1 in (3, 9, 15)):
+                    ch = '+'
+                else:
+                    ch = '.'
+
+                board.append(ch)
+                if not is_last_stone:
+                    board.append(' ')
+
+            if i == 19 and self._state.history:
+                if self._state.history[-1]:
+                    board.append('    ;{}({}{})'.format('W' if self._state.current_player == 1 and not self._state.is_end_of_game else 'B',
+                                                        AXIS[self._state.history[-1][0]].upper(),
+                                                        (str)(self._state.history[-1][1]+1)))
+                else:
+                    board.append('    ;{}(tt)'.format('W' if self._state.current_player == 1 and not self._state.is_end_of_game else 'B'))
+
+            if i == 17 and self._state.is_end_of_game:
+                score_white, score_black = self.calculate_score()
+                board.append('    ' + ('Draw' if not self._state.get_winner() else 'Winner: {}'.format(RESULT[self._state.get_winner()])))
+                board.append(' (W: {}, B: {})'.format(score_white, score_black))
+
+            board.append('\n')
+
+        return ''.join(board)
 
 
 def run_gtp(player_obj, inpt_fn=None, name="Gtp Player", version="0.0"):
