@@ -235,9 +235,8 @@ class MCTS(object):
         """
         # Start timer and get consideration time (timeout) for this play
         timeout = self._timer.start()
-
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
+            move = go.PASS_MOVE
             # Expand only when starting on leaf node
             if self._root.is_leaf():
                 self._root.expand(self._policy(state))
