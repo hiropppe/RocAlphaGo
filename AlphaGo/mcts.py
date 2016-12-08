@@ -4,7 +4,10 @@ This is a "pure" implementation of the AlphaGo MCTS algorithm in that it is not 
 game of Go; everything in this file is implemented generically with respect to some state, actions,
 policy function, and value function.
 """
+import concurrent.futures
 import numpy as np
+import sys
+import traceback
 
 from operator import itemgetter
 
@@ -118,8 +121,8 @@ class MCTS(object):
     fast evaluation from leaf nodes to the end of the game.
     """
 
-    def __init__(self, value_fn, policy_fn, rollout_policy_fn, lmbda=0.5, c_puct=5,
-                 rollout_limit=500, n_playout=10000, n_expand_threshold=2):
+    def __init__(self, value_fn, policy_fn, rollout_policy_fn, timer,
+                 lmbda=0.5, c_puct=5, rollout_limit=500, n_playout=10000, n_expand_threshold=2):
         """Arguments:
         value_fn -- a function that takes in a state and ouputs a score in [-1, 1], i.e. the
             expected value of the end game score from the current player's perspective.
@@ -137,11 +140,17 @@ class MCTS(object):
         self._value = value_fn
         self._policy = policy_fn
         self._rollout = rollout_policy_fn
+        self._timer = timer
         self._lmbda = lmbda
         self._c_puct = c_puct
         self._rollout_limit = rollout_limit
         self._n_playout = n_playout
         self._n_expand_threshold = n_expand_threshold
+
+    def _run_playouts(self, state):
+        for n in range(self._n_playout):
+            state_copy = state.copy()
+            self._playout(state_copy)
 
     def _playout(self, state):
         """Run a single playout from the root to the given depth, getting a value at the leaf and
@@ -224,18 +233,48 @@ class MCTS(object):
         Returns:
         the selected action
         """
+        # Start timer and get consideration time (timeout) for this play
+        timeout = self._timer.start()
 
-        # Expand only when starting on leaf node
-        if self._root.is_leaf():
-            self._root.expand(self._policy(state))
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            # Expand only when starting on leaf node
+            if self._root.is_leaf():
+                self._root.expand(self._policy(state))
 
-        for n in range(self._n_playout):
-            state_copy = state.copy()
-            self._playout(state_copy)
+            # Backup move for timeout without playout
+            move = max(self._root._children.iteritems(), key=lambda act_node: act_node[1]._P)[0]
+
+            if self._n_playout:
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                try:
+                    future = executor.submit(self._run_playouts, state)
+                    future.result(timeout)
+                except concurrent.futures.TimeoutError:
+                    sys.stderr.write('Playout timed out.\n')
+                except:
+                    err, msg, _ = sys.exc_info()
+                    sys.stderr.write("{} {}\n".format(err, msg))
+                    sys.stderr.write(traceback.format_exc())
+                finally:
+                    sys.stderr.write('Shutting down executor...\n')
+                    executor.shutdown(wait=False)
+                    sys.stderr.write('Executor shutdown.\n')
+        except:
+            err, msg, _ = sys.exc_info()
+            sys.stderr.write("{} {}\n".format(err, msg))
+            sys.stderr.write(traceback.format_exc())
+        finally:
+            self._timer.stop()
 
         # chosen action is the *most visited child*, not the highest-value one
         # (they are the same as self._n_playout gets large).
-        return max(self._root._children.iteritems(), key=lambda act_node: act_node[1]._Nr)[0]
+        if any(act_node._Nr for act_node in self._root._children.values()):
+            move = max(self._root._children.iteritems(), key=lambda act_node: act_node[1]._Nr)[0]
+        else:
+            sys.stderr.write('Any child node has visited.\n')
+
+        return move
 
     def update_with_move(self, last_move):
         """Step forward in the tree, keeping everything we already know about the subtree, assuming

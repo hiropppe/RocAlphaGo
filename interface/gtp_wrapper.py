@@ -48,8 +48,19 @@ class ExtendedGtpEngine(gtp.Engine):
             # if can't get answer from GnuGo, return no result
             return ''
 
+    def cmd_time_settings(self, arguments):
+        try:
+            main_time, byo_yomi_time, byo_yomi_stone = [int(t) for t in arguments.split()]
+        except ValueError:
+            raise ValueError('Invalid time_settings input: {}'.format(arguments))
+        self._game.set_time(main_time, byo_yomi_time, byo_yomi_stone)
+
     def cmd_time_left(self, arguments):
-        pass
+        try:
+            color, time, stone = arguments.split()
+            self._game.set_time_left(color, (int)(time), (int)(stone))
+        except ValueError:
+            raise ValueError('Invalid time_left input: {}'.format(arguments))
 
     def cmd_place_free_handicap(self, arguments):
         try:
@@ -114,6 +125,12 @@ class GTPGameConnector(object):
 
     def set_komi(self, k):
         self._state.komi = k
+
+    def set_time(self, m, b, stone):
+        self._player.set_time(m=m, b=b, bs=stone)
+
+    def set_time_left(self, color, time, stone):
+        self._player.set_time_left(time, stone)
 
     def get_move(self, color):
         self._state.current_player = color

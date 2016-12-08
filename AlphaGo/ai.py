@@ -3,6 +3,7 @@ import numpy as np
 from operator import itemgetter
 from AlphaGo import go
 from AlphaGo import mcts
+from AlphaGo import timer 
 
 
 class GreedyPolicyPlayer(object):
@@ -99,10 +100,18 @@ class ProbabilisticPolicyPlayer(object):
 
 
 class MCTSPlayer(object):
-    def __init__(self, value_function, policy_function, rollout_function, lmbda=.5, c_puct=5,
-                 rollout_limit=500, n_playout=100):
-        self.mcts = mcts.MCTS(value_function, policy_function, rollout_function, lmbda, c_puct,
-                              rollout_limit, n_playout)
+
+    def __init__(self, value_function, policy_function, rollout_function,
+                 timer=timer.Canadian(), lmbda=.5, c_puct=5, rollout_limit=500,
+                 n_playout=100):
+        self.mcts = mcts.MCTS(value_function, policy_function, rollout_function, timer,
+                              lmbda, c_puct, rollout_limit, n_playout)
+
+    def set_time(self, m, b, bs):
+        self.mcts._timer = timer.Canadian(m=m, b=b, bs=bs)
+
+    def set_time_left(self, time, stone):
+        self.mcts._timer.set_time_left(time, stone)
 
     def get_move(self, state):
         sensible_moves = [move for move in state.get_legal_moves(include_eyes=False)]

@@ -1,6 +1,7 @@
 import numpy as np
 
-import AlphaGo.ai as ai
+from AlphaGo import ai
+from AlphaGo import timer
 
 from AlphaGo.models.policy import CNNPolicy
 from AlphaGo.models.value import CNNValue
@@ -47,10 +48,13 @@ if __name__ == "__main__":
     parser.add_argument("policy_weight", help="Policy network weight (hdf5)")
     parser.add_argument("value_model", help="Value network model (json)")
     parser.add_argument("value_weight", help="Value network weight (hdf5)")
-    parser.add_argument("--server", default=False, action="store_true",
-                        help="Server mode")
     parser.add_argument("--n-playout", type=int, default=10,
                         help="Number of simulation for each play")
+    parser.add_argument("--time", "-t", type=str, default='2000 50 180 6',
+                        help="Time settings supporting Canadian byo-yomi. \
+                              Main time, Byo-yomi time and Byo-yomi stone")
+    parser.add_argument("--server", default=False, action="store_true",
+                        help="Server mode")
 
     args = parser.parse_args()
 
@@ -60,9 +64,12 @@ if __name__ == "__main__":
     value_net = CNNValue.load_model(args.value_model)
     value_net.model.load_weights(args.value_weight)
 
+    m, ms, b, bs = [(int)(t) for t in args.time.split()]
+
     player = ai.MCTSPlayer(lambda state: f_value(value_net, state),
                            lambda state: f_policy(policy_net, state),
                            lambda state: f_rollout(policy_net, state),
+                           timer=timer.Canadian(m, ms, b, bs),
                            n_playout=args.n_playout)
 
     gtp_game = GTPGameConnector(player)
