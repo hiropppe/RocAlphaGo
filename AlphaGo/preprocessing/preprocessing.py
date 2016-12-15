@@ -205,6 +205,67 @@ def get_legal(state):
     return feature
 
 
+def get_response(state):
+    return np.zeros((state.size**2, 1))
+
+
+def get_save_atari(state):
+    pattern = np.zeros((state.size**2, 1))
+    return pattern
+
+
+def get_neighbour(state):
+    """ Move is 8-connected to previous move
+    """
+    pattern = np.zeros((state.size**2, 8))
+    if 0 < len(state.history):
+        px, py = state.history[-1]
+        for (x, y) in state.get_legal_moves():
+            center = px*state.size + py
+            move = x*state.size + y
+
+            i = x*state.size + y
+            if move == center - state.size - 1:
+                pattern[i, 0] = 1
+            elif move == center - state.size:
+                pattern[i, 1] = 1
+            elif move == center - state.size + 1:
+                pattern[i, 2] = 1
+            elif move == center - 1:
+                pattern[i, 3] = 1
+            elif move == center + 1:
+                pattern[i, 4] = 1
+            elif move == center + state.size - 1:
+                pattern[i, 5] = 1
+            elif move == center + state.size:
+                pattern[i, 6] = 1
+            elif move == center + state.size + 1:
+                pattern[i, 7] = 1
+            else:
+                pass
+    return pattern
+
+
+def get_distance(state):
+    """ Manhattan distance to previous two moves
+    """
+    cap = state.size-2
+    pattern = np.zeros((state.size**2, 2*cap))
+    if 1 < len(state.history):
+        prev2, prev1 = state.history[-2], state.history[-1]
+        for (x, y) in state.get_legal_moves():
+            i = x*state.size + y
+            d = min(get_mdist(prev2, prev1, cap) + get_mdist(prev1, (x, y), cap), 2*cap)
+            pattern[i, d-1] = 1
+    return pattern
+
+
+def get_mdist(p1, p2, cap):
+    dx = min(abs(p1[0] - p2[0]), cap)
+    dy = min(abs(p1[1] - p2[1]), cap)
+    return dx + dy
+
+
 # named features and their sizes are defined here
 FEATURES = {
     "board": {
@@ -259,6 +320,20 @@ FEATURES = {
         "size": 1,
         "function": lambda state: np.ones((1, state.size, state.size)) *
         (state.current_player == go.BLACK)
+    },
+    # rollout
+    "response": {
+        "size": 1,
+        "function": get_response
+    },
+    "neighbour": {
+        "size": 8,
+        "function": get_neighbour
+    },
+    # tree
+    "distance": {
+        "size": 34,
+        "function": get_distance
     }
 }
 
@@ -266,6 +341,15 @@ DEFAULT_FEATURES = [
     "board", "ones", "turns_since", "liberties", "capture_size",
     "self_atari_size", "liberties_after", "ladder_capture", "ladder_escape",
     "sensibleness", "zeros"]
+
+
+ROLLOUT_FEATURES = [
+    "response", "neighbour"
+]
+
+TREE_FEATURES = [
+    "response", "neighbour", "distance"
+]
 
 
 class Preprocess(object):
@@ -297,3 +381,34 @@ class Preprocess(object):
         # concatenate along feature dimension then add in a singleton 'batch' dimension
         f, s = self.output_dim, state.size
         return np.concatenate(feat_tensors).reshape((1, f, s, s))
+
+
+class RolloutPreprocess(object):
+    """a class to convert from AlphaGo GameState objects to tensors of one-hot
+    features for NN inputs
+    """
+
+    def __init__(self, feature_list=ROLLOUT_FEATURES):
+        """create a preprocessor object that will concatenate together the
+        given list of features
+        """
+
+        self.output_dim = 0
+        self.feature_list = feature_list
+        self.processors = [None] * len(feature_list)
+        for i in range(len(feature_list)):
+            feat = feature_list[i].lower()
+            if feat in FEATURES:
+                self.processors[i] = FEATURES[feat]["function"]
+                self.output_dim += FEATURES[feat]["size"]
+            else:
+                raise ValueError("uknown feature: %s" % feat)
+
+    def state_to_tensor(self, state):
+        """Convert a GameState to a Theano-compatible tensor
+        """
+        feat_tensors = [proc(state) for proc in self.processors]
+
+        # concatenate along feature dimension then add in a singleton 'batch' dimension
+        f, s = self.output_dim, state.size**2
+        return np.concatenate(feat_tensors, axis=1).reshape((1, s, f))
