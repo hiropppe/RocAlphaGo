@@ -1,11 +1,12 @@
 import numpy as np
 
+from AlphaGo import util
+
+
 WHITE = -1
 BLACK = +1
 EMPTY = 0
 PASS_MOVE = None
-CINDX = 'abcdefghjklmnopqrst'
-RESULT = 'DBW'
 
 
 class GameState(object):
@@ -583,72 +584,7 @@ class GameState(object):
         return self.is_end_of_game
 
     def showboard(self):
-        """
-           A B C D E F G
-         7 . . . . . . . 7     ;W(B6)
-         6 .(O). . . . . 6
-         5 . . . X . . . 5
-         4 . . . . . . . 4
-         3 . . O . X . . 3
-         2 . . . . . . . 2
-         1 . . . . . . . 1
-           A B C D E F G
-        """
-        board = ['\n']
-        for i in [_i for _i in xrange(self.size + 2)][::-1]:
-            for j in xrange(self.size + 2):
-                is_last_stone = False
-                if i in (0, self.size + 1) and j in (0, self.size + 1):
-                    ch = '  '
-                elif i in (0, self.size + 1):
-                    ch = CINDX[j-1].upper()
-                elif j == 0:
-                    ch = (str)(i).rjust(2)
-                elif j == self.size + 1:
-                    ch = (str)(i).ljust(2)
-                elif self.board[j-1][i-1] == 1:
-                    if self.history[-1] \
-                       and self.history[-1][0] == j-1 \
-                       and self.history[-1][1] == i-1:
-                        board = board[:-1]
-                        is_last_stone = True
-                        ch = '(X)'
-                    else:
-                        ch = 'X'
-                elif self.board[j-1][i-1] == -1:
-                    if self.history[-1] \
-                       and self.history[-1][0] == j-1 \
-                       and self.history[-1][1] == i-1:
-                        board = board[:-1]
-                        is_last_stone = True
-                        ch = '(O)'
-                    else:
-                        ch = 'O'
-                elif self.size == 19 and (i-1 in (3, 9, 15)) and (j-1 in (3, 9, 15)):
-                    ch = '+'
-                else:
-                    ch = '.'
-
-                board.append(ch)
-                if not is_last_stone:
-                    board.append(' ')
-
-            if i == self.size and self.history:
-                if self.history[-1]:
-                    board.append('    ;{}({}{})'.format('W' if self.current_player == 1 and not self.is_end_of_game else 'B',
-                                                        CINDX[self.history[-1][0]].upper(),
-                                                        (str)(self.history[-1][1]+1)))
-                else:
-                    board.append('    ;{}(tt)'.format('W' if self.current_player == 1 and not self.is_end_of_game else 'B'))
-
-            if i == self.size-2 and self.is_end_of_game:
-                score_white, score_black = self.calculate_score()
-                board.append('    ' + ('Draw' if not self.get_winner() else 'Winner: {}'.format(RESULT[self.get_winner()])))
-                board.append(' (W: {}, B: {})'.format(score_white, score_black))
-
-            board.append('\n')
-
-        return ''.join(board)
+        print(util.get_ascii_board(self))
 
 
 class IllegalMove(Exception):
