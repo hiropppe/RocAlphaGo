@@ -210,7 +210,19 @@ def get_response(state):
 
 
 def get_save_atari(state):
+    """ Move saves stone(s) from capture
+    """
     pattern = np.zeros((state.size**2, 1))
+    for (x, y) in state.get_legal_moves():
+        for neighbor_group in state.get_groups_around((x, y)):
+            (gx, gy) = next(iter(neighbor_group))
+            if state.board[gx, gy] == state.current_player:
+                lib_count = state.liberty_counts[gx][gy]
+                if lib_count == 1:
+                    (lx, ly) = next(iter(state.liberty_sets[gx][gy]))
+                    lib_set_after = state.liberty_sets[lx][ly]
+                    if len(lib_set_after) >= 2:
+                        pattern[ly*state.size+lx, 0] = 1
     return pattern
 
 
@@ -221,10 +233,10 @@ def get_neighbour(state):
     if 0 < len(state.history):
         px, py = state.history[-1]
         for (x, y) in state.get_legal_moves():
-            center = px*state.size + py
-            move = x*state.size + y
+            center = py*state.size + px
+            move = y*state.size + x
 
-            i = x*state.size + y
+            i = y*state.size + x
             if move == center - state.size - 1:
                 pattern[i, 0] = 1
             elif move == center - state.size:
@@ -254,7 +266,7 @@ def get_distance(state):
     if 1 < len(state.history):
         prev2, prev1 = state.history[-2], state.history[-1]
         for (x, y) in state.get_legal_moves():
-            i = x*state.size + y
+            i = y*state.size + x
             d = min(get_mdist(prev2, prev1, cap) + get_mdist(prev1, (x, y), cap), 2*cap)
             pattern[i, d-1] = 1
     return pattern
