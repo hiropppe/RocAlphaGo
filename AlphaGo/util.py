@@ -2,7 +2,8 @@ import os
 import itertools
 import numpy as np
 import sgf
-from AlphaGo import go
+
+import go
 
 # for board location indexing
 LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -295,9 +296,9 @@ def get_ascii_board(state):
                 board.append('    ;{}(tt)'.format('W' if state.current_player == 1 and not state.is_end_of_game else 'B'))
 
         if i == state.size-2 and state.is_end_of_game:
-            score_white, score_black = state.calculate_score()
+            #score_white, score_black = state.calculate_score()
             board.append('    ' + ('Draw' if not state.get_winner() else 'Winner: {}'.format(RESULT[state.get_winner()])))
-            board.append(' (W: {}, B: {})'.format(score_white, score_black))
+            #board.append(' (W: {}, B: {})'.format(score_white, score_black))
 
         board.append('\n')
 
