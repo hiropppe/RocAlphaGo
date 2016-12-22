@@ -77,7 +77,6 @@ def gen_pattern(input_file, output_file, symmetry=False):
 
         key = [get_pos_state_key(gs, pos, board_size) for pos in util.get_3x3around(centers[i])]
         pat = np.array([pos_state[index] for index in key]).reshape((pat_size, pat_size))
-
         if symmetry:
             pat, val, transform = util.get_min_pattern(pat, len(pos_state))
         else:
@@ -95,8 +94,8 @@ def gen_pattern(input_file, output_file, symmetry=False):
 
 if __name__ == '__main__':
     try:
-        symmetry = bool(sys.argv[3])
+        symmetry = int(sys.argv[3])
     except:
-        symmetry = True
+        symmetry = 0
 
     gen_pattern(sys.argv[1], sys.argv[2], symmetry)

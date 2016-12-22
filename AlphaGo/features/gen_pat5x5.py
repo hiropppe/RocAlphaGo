@@ -38,6 +38,7 @@ class PatternGenerator(object):
         print('  Centers: {}'.format(centers))
         print('  Distance_func: {}'.format(str(distance_func)))
         print('  Distance: {}'.format(distance))
+        print('  Symmectic: {}'.format(symmetry))
 
         tmp_file = os.path.join(output_file + '.tmp')
         h5f = h5.File(tmp_file, 'w')
@@ -143,6 +144,7 @@ class PatternGenerator(object):
             progress_bar.update(1)
         progress_bar.close()
 
+
 if __name__ == '__main__':
     board_size = 5
     try:
@@ -158,16 +160,21 @@ if __name__ == '__main__':
         distance = 1  # fixed
 
     try:
+        symmetry = int(sys.argv[3])
+    except:
+        symmetry = 0
+
+    try:
         centers = [tuple([int(e.split(',')[0]), int(e.split(',')[1])])
-                   for e in re.findall(r'\d\s*,\s*\d', sys.argv[3])]
+                   for e in re.findall(r'\d\s*,\s*\d', sys.argv[4])]
     except:
         centers = [(i, j) for i in xrange(board_size) for j in xrange(board_size)]
         #centers = [(0,0), (0,1), (0,2), (1,1), (1,2), (2,2)]
 
     try:
-        workers = int(sys.argv[4])
+        workers = int(sys.argv[5])
     except:
         workers = 1
 
     pg = PatternGenerator(board_size=board_size, workers=workers)
-    pg.gen_patterns(sys.argv[1], centers, distance_func, distance, False)
+    pg.gen_patterns(sys.argv[1], centers, distance_func, distance, symmetry)

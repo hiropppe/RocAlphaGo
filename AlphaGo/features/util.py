@@ -13,7 +13,7 @@ transforms = [
     lambda board: np.fliplr(board),
     lambda board: np.flipud(board),
     lambda board: np.transpose(board),
-    lambda board: np.rot90(np.fliplr(board))
+    lambda board: np.rot90(np.flipud(board))
 ]
 
 
@@ -27,15 +27,15 @@ def get_3x3around(c):
     """ Return 3x3 indexes around specified center
     """
     return ((c[0]-1, c[1]-1), (c[0]-1, c[1]), (c[0]-1, c[1]+1),
-            (c[0], c[1]-1), (c[0], c[1]), (c[0], c[1]+1),
-            (c[0]+1, c[1]), (c[0]+1, c[1]), (c[0], c[1]+1))
+            (c[0],   c[1]-1), (c[0],   c[1]), (c[0],   c[1]+1),
+            (c[0]+1, c[1]-1), (c[0]+1, c[1]), (c[0]+1, c[1]+1))
 
 
 def get_pattern_value(board, base):
     size = board.shape[0]
     base_array = np.array([base]*size**2).reshape((size, size))
     power_array = np.arange(size**2).reshape((size, size))
-    value = np.sum(base_array ** power_array * (board + 1))
+    value = np.sum(base_array ** power_array * board)
     return value
 
 
@@ -47,7 +47,7 @@ def get_min_pattern(board, base):
     size = board.shape[0]
     base_array = np.array([base]*size**2).reshape((size, size))
     power_array = np.arange(size**2).reshape((size, size))
-    values = [np.sum(base_array ** power_array * (pat + 1)) for pat in symmetries]
+    values = [np.sum(base_array ** power_array * pat) for pat in symmetries]
     min_index = np.argmin(values)
 
     return symmetries[min_index], values[min_index], transforms[min_index]
@@ -83,7 +83,7 @@ def playout(moves, indexes, center, symmetry=False):
         # clear center
         gs.board[center[0], center[1]] = 0
         if symmetry:
-            min_board, min_value, min_func = get_min_pattern(gs.board, 3)
+            min_board, min_value, min_func = get_min_pattern(gs.board+1, 3)
 
             # get center after transform
             tmp = np.zeros(gs.board.shape)
@@ -91,8 +91,8 @@ def playout(moves, indexes, center, symmetry=False):
             tmp = min_func(tmp)
             nonzero = tmp.nonzero()
             new_center = zip(nonzero[0], nonzero[1])[0]
-            return min_board, min_value, new_center
+            return min_board-1, min_value, new_center
         else:
-            return gs.board, get_pattern_value(gs.board, 3), center
+            return gs.board, get_pattern_value(gs.board+1, 3), center
     except go.IllegalMove:
         return None
