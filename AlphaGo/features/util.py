@@ -7,13 +7,13 @@ import AlphaGo.go as go
 
 transforms = [
     lambda board: board,
-    lambda board: np.rot90(board),
-    lambda board: np.rot90(np.rot90(board)),
-    lambda board: np.rot90(np.rot90(np.rot90(board))),
+    lambda board: np.rot90(board, 1),
+    lambda board: np.rot90(board, 2),
+    lambda board: np.rot90(board, 3),
     lambda board: np.fliplr(board),
     lambda board: np.flipud(board),
     lambda board: np.transpose(board),
-    lambda board: np.rot90(np.flipud(board))
+    lambda board: np.fliplr(np.rot90(board, 1))
 ]
 
 
