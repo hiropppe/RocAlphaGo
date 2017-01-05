@@ -173,10 +173,20 @@ def run_game_converter(cmd_line_args=None):
     else:
         args = parser.parse_args(cmd_line_args)
 
-    if args.features.lower() == 'all':
+    if args.features.lower() == 'rollout':
         feature_list = [
             "response",
+            "save_atari",
             "neighbour",
+            "response_pattern",
+            "non_response_pattern"]
+    elif args.features.lower() == 'tree':
+        feature_list = [
+            "response",
+            "save_atari",
+            "neighbour",
+            "response_pattern",
+            "non_response_pattern"
             "distance"]
     else:
         feature_list = args.features.split(",")

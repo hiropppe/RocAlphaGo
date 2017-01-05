@@ -2,6 +2,8 @@ import numpy as np
 import AlphaGo.go as go
 import keras.backend as K
 
+from AlphaGo.features import util as feat_util
+
 # This file is used anywhere that neural net features are used; setting the keras dimension ordering
 # here makes it universal to the project.
 K.set_image_dim_ordering('th')
@@ -258,6 +260,20 @@ def get_neighbour(state):
     return pattern
 
 
+def get_response_pattern(state, maximum):
+    """ Move matches 12-point diamond pattern near previous move
+    """
+    pattern = np.zeros((state.size**2, maximum))
+    return pattern
+
+
+def get_non_response_pattern(state, maximum):
+    """ Move matches 3 × 3 pattern around move 
+    """
+    pattern = np.zeros((state.size**2, maximum))
+    return pattern
+
+
 def get_distance(state):
     """ Manhattan distance to previous two moves
     """
@@ -338,9 +354,19 @@ FEATURES = {
         "size": 1,
         "function": get_response
     },
+    "save_atari": {
+        "size": 1,
+        "function": get_save_atari
+    },
     "neighbour": {
         "size": 8,
         "function": get_neighbour
+    },
+    "response_pattern": {
+        "function": get_response_pattern
+    },
+    "non_response_pattern": {
+        "function": get_non_response_pattern
     },
     # tree
     "distance": {
