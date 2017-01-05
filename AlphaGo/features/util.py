@@ -23,31 +23,38 @@ def get_position(index, board_size):
     return (index/board_size, index % board_size)
 
 
-def get_3x3around(c):
+def is_in_manhattan(center, i, j, d):
+    return abs(center[0]-i) + abs(center[1]-j) <= d
+
+
+def get_around(c, d):
     """ Return 3x3 indexes around specified center
     """
-    return ((c[0]-1, c[1]-1), (c[0]-1, c[1]), (c[0]-1, c[1]+1),
-            (c[0],   c[1]-1), (c[0],   c[1]), (c[0],   c[1]+1),
-            (c[0]+1, c[1]-1), (c[0]+1, c[1]), (c[0]+1, c[1]+1))
+    return tuple([(c[0]+i, c[1]+j)
+                  for i in range(-d, d+1, 1)
+                  for j in range(-d, d+1, 1)])
 
 
-def get_pattern_value(board, base):
-    size = board.shape[0]
-    base_array = np.array([base]*size**2).reshape((size, size))
-    power_array = np.arange(size**2).reshape((size, size))
-    value = np.sum(base_array ** power_array * board)
+def get_diamond_enclosing_square(c, d):
+    """ Return indexes of square encloding manhattan diamond in d
+        from specified center
+    """
+    return tuple([(c[0]+i, c[1]+j) if is_in_manhattan(c, c[0]+i, c[1]+j, d) else None
+                  for i in range(-d, d+1, 1)
+                  for j in range(-d, d+1, 1)])
+
+
+def get_pattern_value(board, base, power):
+    value = np.sum(base ** power * board)
     return value
 
 
-def get_min_pattern(board, base):
+def get_min_pattern(board, base, power):
     """ Return min pattern considering symmetry of state board
     """
     symmetries = [f(board) for f in transforms]
 
-    size = board.shape[0]
-    base_array = np.array([base]*size**2).reshape((size, size))
-    power_array = np.arange(size**2).reshape((size, size))
-    values = [np.sum(base_array ** power_array * pat) for pat in symmetries]
+    values = [np.sum(base ** power * pat) for pat in symmetries]
     min_index = np.argmin(values)
 
     return symmetries[min_index], values[min_index], transforms[min_index]
@@ -82,8 +89,12 @@ def playout(moves, indexes, center, symmetry=False):
         gs.do_move(center)
         # clear center
         gs.board[center[0], center[1]] = 0
+
+        base_val = 3
+        base = np.array([base_val]*gs.size**2).reshape((gs.size, gs.size))
+        power = np.arange(gs.size**2).reshape((gs.size, gs.size))
         if symmetry:
-            min_board, min_value, min_func = get_min_pattern(gs.board+1, 3)
+            min_board, min_value, min_func = get_min_pattern(gs.board+1, base, power)
 
             # get center after transform
             tmp = np.zeros(gs.board.shape)
@@ -93,6 +104,6 @@ def playout(moves, indexes, center, symmetry=False):
             new_center = zip(nonzero[0], nonzero[1])[0]
             return min_board-1, min_value, new_center
         else:
-            return gs.board, get_pattern_value(gs.board+1, 3), center
+            return gs.board, get_pattern_value(gs.board+1, base, power), center
     except go.IllegalMove:
         return None

@@ -151,7 +151,7 @@ if __name__ == '__main__':
         distance_func = sys.argv[2]
         if distance_func == 'mht':
             distance_func = is_in_manhattan
-            distance = 3  # fixed
+            distance = 2  # fixed
         else:
             distance_func = is_in_3x3
             distance = 1  # fixed

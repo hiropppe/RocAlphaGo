@@ -17,7 +17,6 @@ except:
 from tqdm import tqdm
 
 
-pat_size = 3
 board_size = 5
 liberty_cap = 3
 
@@ -27,6 +26,7 @@ EMPTY = go.EMPTY
 OUT_OF_INDEX = 3
 
 pos_state = {
+    None: -1,
     (EMPTY, -1): 0,
     (WHITE, 1): 1,
     (WHITE, 2): 2,
@@ -37,11 +37,16 @@ pos_state = {
     (OUT_OF_INDEX, -1): 7
 }
 
+pos_state_len = len(pos_state)-1
+
 
 def get_pos_state_key(gs, pos, board_size):
     """ Return key for state at each intersection of board
         based on stone solor and liberty count
     """
+    if pos is None:
+        return None
+
     if 0 <= min(pos) and max(pos) <= board_size-1:
         color = gs.board[pos[0], pos[1]]
         liberty = min(gs.liberty_counts[pos[0], pos[1]], liberty_cap)
@@ -51,7 +56,7 @@ def get_pos_state_key(gs, pos, board_size):
     return (color, liberty)
 
 
-def gen_pattern(input_file, output_file, symmetry=False):
+def gen_pattern(input_file, output_file, pat_filter, symmetry=False):
     """ Write possible 3x3 patterns in 5x5 samples
     """
     pat5x5 = h5.File(input_file)
@@ -62,6 +67,8 @@ def gen_pattern(input_file, output_file, symmetry=False):
 
     assert states.len() == centers.len(), 'Invalid input'
 
+    base = None
+    power = None
     for i in tqdm(range(states.len())):
         gs = go.GameState(size=board_size)
         # Play board state
@@ -75,12 +82,29 @@ def gen_pattern(input_file, output_file, symmetry=False):
                 gs.do_move(go.PASS_MOVE)
                 gs.do_move(action)
 
-        key = [get_pos_state_key(gs, pos, board_size) for pos in util.get_3x3around(centers[i])]
-        pat = np.array([pos_state[index] for index in key]).reshape((pat_size, pat_size))
+        state_keys = [get_pos_state_key(gs, pos, board_size) for pos in pat_filter(centers[i])]
+        pat_size = int(np.sqrt(len(state_keys)))
+        pat = np.array([pos_state[state_key] for state_key in state_keys]) \
+                .reshape((pat_size, pat_size))
+
+        if base is None:
+            base = np.array([pos_state_len]*pat_size**2).reshape((pat_size, pat_size))
+
+        if power is None:
+            p = 0
+            power = []
+            for s in pat.flatten():
+                if s == -1:
+                    power.append(0)
+                else:
+                    power.append(p)
+                    p += 1
+            power = np.array(power).reshape((pat_size, pat_size))
+
         if symmetry:
-            pat, val, transform = util.get_min_pattern(pat, len(pos_state))
+            pat, val, transform = util.get_min_pattern(pat, base, power)
         else:
-            val = util.get_pattern_value(pat, len(pos_state))
+            val = util.get_pattern_value(pat, base, power)
 
         if val not in pat3x3:
             pat3x3[val] = pat_idx
@@ -94,8 +118,17 @@ def gen_pattern(input_file, output_file, symmetry=False):
 
 if __name__ == '__main__':
     try:
-        symmetry = int(sys.argv[3])
+        pat = sys.argv[3]
+        if pat == 'mht':
+            pat_filter = lambda c: util.get_diamond_enclosing_square(c, int(sys.argv[4]))
+        else:
+            pat_filter = lambda c: util.get_around(c, int(sys.argv[4]))
+    except:
+        pat_filter = lambda c: util.get_around(c, 1)
+
+    try:
+        symmetry = int(sys.argv[5])
     except:
         symmetry = 0
 
-    gen_pattern(sys.argv[1], sys.argv[2], symmetry)
+    gen_pattern(sys.argv[1], sys.argv[2], pat_filter, symmetry)
