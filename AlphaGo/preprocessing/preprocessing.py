@@ -2,7 +2,7 @@ import numpy as np
 import AlphaGo.go as go
 import keras.backend as K
 
-from AlphaGo.features import util as feat_util
+import pattern
 
 # This file is used anywhere that neural net features are used; setting the keras dimension ordering
 # here makes it universal to the project.
@@ -260,17 +260,33 @@ def get_neighbour(state):
     return pattern
 
 
-def get_response_pattern(state, maximum):
+def get_response_pattern(state, pat_dict):
     """ Move matches 12-point diamond pattern near previous move
     """
-    pattern = np.zeros((state.size**2, maximum))
-    return pattern
+    feature = np.zeros((state.size**2, len(pat_dict)))
+    if state.history:
+        key = pattern.get_diamond_value(state)
+        try:
+            idx = pat_dict[key]
+            for (x, y) in state.get_level_moves():
+                if pattern.is_in_manhattan(state.history[-1], x, y):
+                    feature[x*state.size+y, idx] = 1
+        except KeyError:
+            pass
+    return feature
 
 
-def get_non_response_pattern(state, maximum):
-    """ Move matches 3 × 3 pattern around move 
+def get_non_response_pattern(state, pat_dict):
+    """ Move matches 3 x 3 pattern around move
     """
-    pattern = np.zeros((state.size**2, maximum))
+    feature = np.zeros((state.size**2, len(pat_dict)))
+    for (x, y) in state.get_level_moves():
+        key = pattern.get_3x3_value(state, (x, y))
+        try:
+            idx = pat_dict[key]
+            feature[x*state.size+y, idx] = 1
+        except KeyError:
+            pass
     return pattern
 
 
@@ -426,10 +442,17 @@ class RolloutPreprocess(object):
     features for NN inputs
     """
 
-    def __init__(self, feature_list=ROLLOUT_FEATURES):
+    def __init__(self, pat_3x3_file, pat_dia_file, feature_list=ROLLOUT_FEATURES):
         """create a preprocessor object that will concatenate together the
         given list of features
         """
+        try:
+            import cPickle as pkl
+        except:
+            import pickle as pkl
+
+        self.pat_3x3_dict = pkl.load(open(pat_3x3_file, "r"))
+        self.pat_dia_dict = pkl.load(open(pat_dia_file, "r"))
 
         self.output_dim = 0
         self.feature_list = feature_list
@@ -437,8 +460,17 @@ class RolloutPreprocess(object):
         for i in range(len(feature_list)):
             feat = feature_list[i].lower()
             if feat in FEATURES:
-                self.processors[i] = FEATURES[feat]["function"]
-                self.output_dim += FEATURES[feat]["size"]
+                if feat == "non_response_pattern":
+                    f = FEATURES[feat]["function"]
+                    self.processors[i] = lambda s: f(s, self.pat_3x3_dict)
+                    self.output_dim += len(self.pat_3x3_dict)
+                elif feat == "response_pattern":
+                    f = FEATURES[feat]["function"]
+                    self.processors[i] = lambda s: f(s, self.pat_dia_dict)
+                    self.output_dim += len(self.pat_dia_dict)
+                else:
+                    self.processors[i] = FEATURES[feat]["function"]
+                    self.output_dim += FEATURES[feat]["size"]
             else:
                 raise ValueError("uknown feature: %s" % feat)
 

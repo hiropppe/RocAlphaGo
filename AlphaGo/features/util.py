@@ -92,9 +92,19 @@ def playout(moves, indexes, center, symmetry=False):
 
         base_val = 3
         base = np.array([base_val]*gs.size**2).reshape((gs.size, gs.size))
-        power = np.arange(gs.size**2).reshape((gs.size, gs.size))
+
+        p = 0
+        power = []
+        for i, idx in enumerate(indexes):
+            if idx:
+                power.append(p)
+                p += 1
+            else:
+                power.append(0)
+
+        power = np.array(power).reshape((gs.size, gs.size))
         if symmetry:
-            min_board, min_value, min_func = get_min_pattern(gs.board+1, base, power)
+            min_board, min_value, min_func = get_min_pattern(gs.board, base, power)
 
             # get center after transform
             tmp = np.zeros(gs.board.shape)
@@ -104,6 +114,6 @@ def playout(moves, indexes, center, symmetry=False):
             new_center = zip(nonzero[0], nonzero[1])[0]
             return min_board-1, min_value, new_center
         else:
-            return gs.board, get_pattern_value(gs.board+1, base, power), center
+            return gs.board, get_pattern_value(gs.board, base, power), center
     except go.IllegalMove:
         return None
