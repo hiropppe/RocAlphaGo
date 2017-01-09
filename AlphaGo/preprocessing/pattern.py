@@ -57,6 +57,25 @@ def is_in_manhattan(center, i, j, d=manhattan_d):
     return abs(center[0]-i) + abs(center[1]-j) <= d
 
 
+def is_around(center, i, j, d=1):
+    return max(abs(center[0]-i), abs(center[1]-j)) <= d
+
+
+def get_index(center, distance_func, distance, board_size):
+    return np.array([distance_func(center, i, j, distance) and
+                    abs(center[0]-i) + abs(center[1]-j) != 0
+                    for i in range(board_size)
+                    for j in range(board_size)]).reshape((board_size, board_size))
+
+
+def get_around_index(center, board_size, distance=1):
+    return get_index(center, is_around, distance, board_size)
+
+
+def get_diamond_index(center, board_size, distance=2):
+    return get_index(center, is_in_manhattan, distance, board_size)
+
+
 def get_around(c, d=1):
     """ Return 3x3 indexes around specified center
     """
