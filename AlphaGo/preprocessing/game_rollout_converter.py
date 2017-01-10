@@ -15,8 +15,8 @@ class SizeMismatchError(Exception):
 
 class GameConverter:
 
-    def __init__(self, features):
-        self.feature_processor = RolloutPreprocess(features)
+    def __init__(self, pat_3x3_file, pat_dia_file, features):
+        self.feature_processor = RolloutPreprocess(pat_3x3_file, pat_dia_file, features)
         self.n_features = self.feature_processor.output_dim
 
     def convert_game(self, file_name, bd_size):
@@ -76,7 +76,7 @@ class GameConverter:
                 shape=(1, bd_size**2, self.n_features),
                 maxshape=(None, bd_size**2, self.n_features),  # 'None' == arbitrary size
                 exact=False,  # allow non-uint8 datasets to be loaded, coerced to uint8
-                chunks=(64, bd_size**2, self.n_features),  # approximately 1MB chunks
+                chunks=(1, bd_size**2, self.n_features),  # approximately 1MB chunks
                 compression="lzf")
             actions = h5f.require_dataset(
                 'actions',
@@ -166,6 +166,8 @@ def run_game_converter(cmd_line_args=None):
     parser.add_argument("--recurse", "-R", help="Set to recurse through directories searching for SGF files", default=False, action="store_true")  # noqa: E501
     parser.add_argument("--directory", "-d", help="Directory containing SGF files to process. if not present, expects files from stdin", default=None)  # noqa: E501
     parser.add_argument("--size", "-s", help="Size of the game board. SGFs not matching this are discarded with a warning", type=int, default=19)  # noqa: E501
+    parser.add_argument("--pat-3x3", help="3x3 pattern file", required=True)
+    parser.add_argument("--pat-dia", help="Diamond pattern file", required=True)
     parser.add_argument("--verbose", "-v", help="Turn on verbose mode", default=False, action="store_true")  # noqa: E501
 
     if cmd_line_args is None:
@@ -194,7 +196,7 @@ def run_game_converter(cmd_line_args=None):
     if args.verbose:
         print("using features", feature_list)
 
-    converter = GameConverter(feature_list)
+    converter = GameConverter(args.pat_3x3, args.pat_dia, feature_list)
 
     def _is_sgf(fname):
         return fname.strip()[-4:] == ".sgf"

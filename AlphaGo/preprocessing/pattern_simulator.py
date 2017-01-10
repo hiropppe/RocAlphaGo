@@ -15,11 +15,10 @@ from concurrent.futures import ProcessPoolExecutor
 from Queue import Queue
 from tqdm import tqdm
 
-import util
 import pattern as ptn
 
 
-class PatternGenerator(object):
+class PatternSimulator(object):
 
     def __init__(self, board_size=5, workers=1):
         self.board_size = board_size
@@ -79,7 +78,7 @@ class PatternGenerator(object):
     def add_pattern(self, result):
         if result is not None:
             min_board, min_value, new_center = result[0], result[1], result[2]
-            if min_value not in self.state_value_set and min_value == 0:
+            if min_value not in self.state_value_set:
                 if self.data_idx >= len(self.states):
                     self.states.resize((self.data_idx + 1, self.board_size, self.board_size))
                     self.centers.resize((self.data_idx + 1, 2))
@@ -97,14 +96,14 @@ class PatternGenerator(object):
         progress_bar.set_description(str(center))
         for p in itertools.product((-1, 0, 1), repeat=play_num):
             if not 1 < workers:
-                result = util.playout(p, play_index, center, symmetry)
+                result = ptn.playout(p, play_index, center, symmetry)
                 successful = self.add_pattern(result)
                 if successful:
                     self.data_idx += 1
             else:
                 put = False
                 if not self.queue.full():
-                    self.queue.put(self.executor.submit(util.playout,
+                    self.queue.put(self.executor.submit(ptn.playout,
                                                         p,
                                                         play_index,
                                                         center,
@@ -119,7 +118,7 @@ class PatternGenerator(object):
                         if successful:
                             self.data_idx += 1
                         if not put:
-                            self.queue.put(self.executor.submit(util.playout,
+                            self.queue.put(self.executor.submit(ptn.playout,
                                                                 p,
                                                                 play_index,
                                                                 center,
@@ -161,5 +160,5 @@ if __name__ == '__main__':
     except:
         workers = 1
 
-    pg = PatternGenerator(board_size=board_size, workers=workers)
+    pg = PatternSimulator(board_size=board_size, workers=workers)
     pg.gen_patterns(sys.argv[1], centers, pattern_func, symmetry)

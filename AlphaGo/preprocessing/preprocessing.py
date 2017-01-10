@@ -2,7 +2,7 @@ import numpy as np
 import AlphaGo.go as go
 import keras.backend as K
 
-import pattern
+import pattern as ptn
 
 # This file is used anywhere that neural net features are used; setting the keras dimension ordering
 # here makes it universal to the project.
@@ -263,14 +263,20 @@ def get_neighbour(state):
 def get_response_pattern(state, pat_dict):
     """ Move matches 12-point diamond pattern near previous move
     """
-    feature = np.zeros((state.size**2, len(pat_dict)))
+    feature_len = len(bin(len(pat_dict)))-2
+    feature = np.zeros((state.size**2, feature_len))
     if state.history:
-        key = pattern.get_diamond_value(state)
+        if state.current_player == go.BLACK:
+            reverse = True
+        else:
+            reverse = False
+        key = ptn.get_diamond_value(state, state.history[-1], symmetric=True, reverse=reverse)
         try:
             idx = pat_dict[key]
-            for (x, y) in state.get_level_moves():
-                if pattern.is_in_manhattan(state.history[-1], x, y):
-                    feature[x*state.size+y, idx] = 1
+            for (x, y) in state.get_legal_moves():
+                if ptn.is_in_manhattan(state.history[-1], x, y):
+                    feature[x*state.size+y] = np.array([b for b in bin(idx)[2:].rjust(feature_len, '0')], dtype=np.byte)
+                    #feature[x*state.size+y, idx] = 1
         except KeyError:
             pass
     return feature
@@ -279,15 +285,21 @@ def get_response_pattern(state, pat_dict):
 def get_non_response_pattern(state, pat_dict):
     """ Move matches 3 x 3 pattern around move
     """
-    feature = np.zeros((state.size**2, len(pat_dict)))
-    for (x, y) in state.get_level_moves():
-        key = pattern.get_3x3_value(state, (x, y))
+    feature_len = len(bin(len(pat_dict)))-2
+    feature = np.zeros((state.size**2, feature_len))
+    for (x, y) in state.get_legal_moves():
+        if state.current_player == go.WHITE:
+            reverse = True
+        else:
+            reverse = False
+        key = ptn.get_3x3_value(state, (x, y), symmetric=False, reverse=reverse)
         try:
             idx = pat_dict[key]
-            feature[x*state.size+y, idx] = 1
+            feature[x*state.size+y] = np.array([b for b in bin(idx)[2:].rjust(feature_len, '0')], dtype=np.byte)
+            #feature[x*state.size+y, idx] = 1
         except KeyError:
             pass
-    return pattern
+    return feature
 
 
 def get_distance(state):
@@ -463,11 +475,11 @@ class RolloutPreprocess(object):
                 if feat == "non_response_pattern":
                     f = FEATURES[feat]["function"]
                     self.processors[i] = lambda s: f(s, self.pat_3x3_dict)
-                    self.output_dim += len(self.pat_3x3_dict)
+                    self.output_dim += len(bin(len(self.pat_3x3_dict)))-2
                 elif feat == "response_pattern":
                     f = FEATURES[feat]["function"]
                     self.processors[i] = lambda s: f(s, self.pat_dia_dict)
-                    self.output_dim += len(self.pat_dia_dict)
+                    self.output_dim += len(bin(len(self.pat_dia_dict)))-2
                 else:
                     self.processors[i] = FEATURES[feat]["function"]
                     self.output_dim += FEATURES[feat]["size"]
