@@ -208,13 +208,18 @@ def get_legal(state):
 
 
 def get_response(state):
-    return np.zeros((state.size**2, 1))
+    feature = np.zeros((state.size**2, 1))
+    if 0 < len(state.history):
+        for (x, y) in state.get_legal_moves():
+            if ptn.is_in_manhattan(state.history[-1], x, y):
+                feature[x*state.size+y] = 1
+    return feature
 
 
 def get_save_atari(state):
     """ Move saves stone(s) from capture
     """
-    pattern = np.zeros((state.size**2, 1))
+    feature = np.zeros((state.size**2, 1))
     for (x, y) in state.get_legal_moves():
         for neighbor_group in state.get_groups_around((x, y)):
             (gx, gy) = next(iter(neighbor_group))
@@ -224,40 +229,40 @@ def get_save_atari(state):
                     (lx, ly) = next(iter(state.liberty_sets[gx][gy]))
                     lib_set_after = state.liberty_sets[lx][ly]
                     if len(lib_set_after) >= 2:
-                        pattern[ly*state.size+lx, 0] = 1
-    return pattern
+                        feature[lx*state.size+ly, 0] = 1
+    return feature
 
 
 def get_neighbour(state):
     """ Move is 8-connected to previous move
     """
-    pattern = np.zeros((state.size**2, 8))
+    feature = np.zeros((state.size**2, 8))
     if 0 < len(state.history):
         px, py = state.history[-1]
         for (x, y) in state.get_legal_moves():
-            center = py*state.size + px
-            move = y*state.size + x
+            center = px*state.size + py
+            move = x*state.size + y
 
-            i = y*state.size + x
+            i = x*state.size + y
             if move == center - state.size - 1:
-                pattern[i, 0] = 1
+                feature[i, 0] = 1
             elif move == center - state.size:
-                pattern[i, 1] = 1
+                feature[i, 1] = 1
             elif move == center - state.size + 1:
-                pattern[i, 2] = 1
+                feature[i, 2] = 1
             elif move == center - 1:
-                pattern[i, 3] = 1
+                feature[i, 3] = 1
             elif move == center + 1:
-                pattern[i, 4] = 1
+                feature[i, 4] = 1
             elif move == center + state.size - 1:
-                pattern[i, 5] = 1
+                feature[i, 5] = 1
             elif move == center + state.size:
-                pattern[i, 6] = 1
+                feature[i, 6] = 1
             elif move == center + state.size + 1:
-                pattern[i, 7] = 1
+                feature[i, 7] = 1
             else:
                 pass
-    return pattern
+    return feature
 
 
 def get_response_pattern(state, pat_dict):
@@ -535,7 +540,7 @@ class RolloutPreprocess(object):
     features for NN inputs
     """
 
-    def __init__(self, pat_3x3_file, pat_dia_file, feature_list=ROLLOUT_FEATURES):
+    def __init__(self, feature_list=ROLLOUT_FEATURES, pat_3x3_file=None, pat_dia_file=None):
         """create a preprocessor object that will concatenate together the
         given list of features
         """
@@ -544,8 +549,10 @@ class RolloutPreprocess(object):
         except:
             import pickle as pkl
 
-        self.pat_3x3_dict = pkl.load(open(pat_3x3_file, "r"))
-        self.pat_dia_dict = pkl.load(open(pat_dia_file, "r"))
+        if pat_3x3_file:
+            self.pat_3x3_dict = pkl.load(open(pat_3x3_file, "r"))
+        if pat_dia_file:
+            self.pat_dia_dict = pkl.load(open(pat_dia_file, "r"))
 
         self.output_dim = 0
         self.feature_list = feature_list

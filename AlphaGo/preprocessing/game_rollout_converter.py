@@ -19,8 +19,8 @@ class SizeMismatchError(Exception):
 
 class GameRolloutConverter:
 
-    def __init__(self, pat_3x3_file, pat_dia_file, features):
-        self.feature_processor = RolloutPreprocess(pat_3x3_file, pat_dia_file, features)
+    def __init__(self, features, pat_3x3_file=None, pat_dia_file=None):
+        self.feature_processor = RolloutPreprocess(features, pat_3x3_file, pat_dia_file)
         self.n_features = self.feature_processor.output_dim
 
     def convert_game(self, file_name, bd_size):
@@ -156,9 +156,9 @@ class GameRolloutConverter:
 
 class ParallelGameRolloutConverter:
 
-    def __init__(self, pat_3x3_file, pat_dia_file, features, nb_workers=2):
+    def __init__(self, features, pat_3x3_file=None, pat_dia_file=None, nb_workers=2):
         self.features = features
-        self.feature_processor = RolloutPreprocess(pat_3x3_file, pat_dia_file, features)
+        self.feature_processor = RolloutPreprocess(features, pat_3x3_file, pat_dia_file)
         self.n_features = self.feature_processor.output_dim
         self.nb_workers = nb_workers
         self.pat_3x3_file = pat_3x3_file
@@ -194,7 +194,7 @@ class ParallelGameRolloutConverter:
         self.__merge_hdf5(hdf5_file, worker_hdf5_files, bd_size)
 
     def __sgfs_to_hdf5(self, sgf_files, hdf5_file, pat_3x3_file, pat_dia_file, bd_size, ignore_errors, verbose):
-        converter = GameRolloutConverter(pat_3x3_file, pat_dia_file, self.features)
+        converter = GameRolloutConverter(self.features, pat_3x3_file, pat_dia_file)
         converter.sgfs_to_hdf5(sgf_files, hdf5_file, bd_size, ignore_errors, verbose)
 
     def __merge_hdf5(self, hdf5_file, worker_hdf5_files, bd_size):
@@ -266,8 +266,8 @@ def run_game_converter(cmd_line_args=None):
     parser.add_argument("--recurse", "-R", help="Set to recurse through directories searching for SGF files", default=False, action="store_true")  # noqa: E501
     parser.add_argument("--directory", "-d", help="Directory containing SGF files to process. if not present, expects files from stdin", default=None)  # noqa: E501
     parser.add_argument("--size", "-s", help="Size of the game board. SGFs not matching this are discarded with a warning", type=int, default=19)  # noqa: E501
-    parser.add_argument("--pat-3x3", help="3x3 pattern file", required=True)
-    parser.add_argument("--pat-dia", help="Diamond pattern file", required=True)
+    parser.add_argument("--pat-3x3", help="3x3 pattern file", default=None)
+    parser.add_argument("--pat-dia", help="Diamond pattern file", default=None)
     parser.add_argument("--verbose", "-v", help="Turn on verbose mode", default=False, action="store_true")  # noqa: E501
     parser.add_argument("--workers", "-w", help="Number of workers to process SGF files", type=int, default=0)
 
@@ -281,12 +281,12 @@ def run_game_converter(cmd_line_args=None):
             "response",
             "save_atari",
             "neighbour",
-            "response_pattern",
-            "non_response_pattern",
+       #     "response_pattern",
+       #     "non_response_pattern",
        #     "response_pattern2",
        #     "non_response_pattern2",
-       #     "response_pattern3",
-       #     "non_response_pattern3",
+            "response_pattern3",
+            "non_response_pattern3",
         ]
     elif args.features.lower() == 'tree':
         feature_list = [
@@ -304,9 +304,9 @@ def run_game_converter(cmd_line_args=None):
         print("using features", feature_list)
 
     if args.workers:
-        converter = ParallelGameRolloutConverter(args.pat_3x3, args.pat_dia, feature_list, args.workers)
+        converter = ParallelGameRolloutConverter(feature_list, args.pat_3x3, args.pat_dia, args.workers)
     else:
-        converter = GameRolloutConverter(args.pat_3x3, args.pat_dia, feature_list)
+        converter = GameRolloutConverter(feature_list, args.pat_3x3, args.pat_dia)
 
     def _is_sgf(fname):
         return fname.strip()[-4:] == ".sgf"
