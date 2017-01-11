@@ -39,6 +39,7 @@ reverse_vertex_state_map = {
 vertex_state_len = len(vertex_state_map) - 1
 
 size_3x3 = 3
+center_3x3 = (int(size_3x3/2), int(size_3x3/2))
 base_3x3 = np.array([vertex_state_len] * size_3x3**2).reshape((size_3x3, size_3x3))
 exp_3x3 = np.array([[0, 1, 2],
                     [3, 4, 5],
@@ -46,6 +47,7 @@ exp_3x3 = np.array([[0, 1, 2],
 
 manhattan_d = 2
 size_dia = 2 * manhattan_d + 1
+center_dia = (int(size_dia/2), int(size_dia/2))
 base_dia = np.array([vertex_state_len] * size_dia**2).reshape((size_dia, size_dia))
 exp_dia = np.array([[0,  0,  0,  0,  0],
                     [0,  1,  2,  3,  0],
@@ -83,19 +85,22 @@ def is_around(center, i, j, d=1):
     return max(abs(center[0] - i), abs(center[1] - j)) <= d
 
 
-def get_index(center, distance_func, distance, board_size):
-    return np.array([distance_func(center, i, j, distance) and
-                     abs(center[0] - i) + abs(center[1] - j) != 0
-                     for i in range(board_size)
-                     for j in range(board_size)]).reshape((board_size, board_size))
+def get_index(center, distance_func, distance, board_size, reshape=True):
+    pat = np.array([distance_func(center, i, j, distance) and
+                    abs(center[0] - i) + abs(center[1] - j) != 0
+                    for i in range(board_size)
+                    for j in range(board_size)])
+    if reshape:
+        pat = pat.reshape((board_size, board_size))
+    return pat
 
 
-def get_around_index(center, board_size, distance=1):
-    return get_index(center, is_around, distance, board_size)
+def get_around_index(center, board_size, distance=1, reshape=True):
+    return get_index(center, is_around, distance, board_size, reshape)
 
 
-def get_diamond_index(center, board_size, distance=2):
-    return get_index(center, is_in_manhattan, distance, board_size)
+def get_diamond_index(center, board_size, distance=2, reshape=True):
+    return get_index(center, is_in_manhattan, distance, board_size, reshape)
 
 
 def get_around(c, d=1):
@@ -139,9 +144,11 @@ def get_vertex_color(gs, pos, board_size, reverse=False):
 
     if 0 <= min(pos) and max(pos) <= board_size - 1:
         color = gs.board[pos[0], pos[1]]
-        return -color + 1 if reverse else color + 1
+        color = -color if reverse else color
     else:
-        return OUT_OF_INDEX + 1
+        color = OUT_OF_INDEX
+    # adjust range 0-3
+    return color + 1
 
 
 def get_3x3_value(gs, c, symmetric=False, reverse=False):
@@ -186,7 +193,7 @@ def get_3x3_color_value(gs, c, symmetric=False, reverse=False):
     """
     """
     vtxes = get_around(c)
-    pat = np.array([get_vertex_color(gs, vtx, gs.size) for vtx in vtxes])
+    pat = np.array([get_vertex_color(gs, vtx, gs.size, reverse=reverse) for vtx in vtxes])
     pat = pat.reshape((size_3x3, size_3x3))
     if symmetric:
         return min([np.sum(base_3x3_color ** exp_3x3 * t(pat)) for t in transformations])
@@ -194,16 +201,110 @@ def get_3x3_color_value(gs, c, symmetric=False, reverse=False):
         return np.sum(base_3x3_color ** exp_3x3 * pat)
 
 
-def get_diamond_color_value(gs, c, symmetric=False, reverse=False):
+def get_diamond_color_value(gs, c, symmetric=True, reverse=False):
     """
     """
     vtxes = get_diamond_enclosing_square(c, manhattan_d)
-    pat = np.array([get_vertex_color(gs, vtx, gs.size) for vtx in vtxes])
+    pat = np.array([get_vertex_color(gs, vtx, gs.size, reverse=reverse) for vtx in vtxes])
     pat = pat.reshape((size_dia, size_dia))
+    # clear center
+    pat[center_dia[0], center_dia[1]] = 0
     if symmetric:
         return min([np.sum(base_dia_color ** exp_dia * t(pat)) for t in transformations])
     else:
         return np.sum(base_dia_color ** exp_dia * pat)
+
+
+def get_3x3_pattern(gs, c, symmetric=False, reverse=False):
+    """
+    """
+    if reverse:
+        state_map = reverse_vertex_state_map
+    else:
+        state_map = vertex_state_map
+
+    vtxes = get_around(c)
+    pat = np.array([state_map[get_vertex_state_key(
+        gs, vtx, gs.size, reverse=reverse)] for vtx in vtxes])
+    pat = pat.reshape((size_3x3, size_3x3))
+    if symmetric:
+        symmetrics = [t(pat) for t in transformations]
+        minidx = np.argmin([np.sum(base_3x3 ** exp_3x3 * sym) for sym in symmetrics])
+        pat = symmetrics[minidx]
+
+    idx = get_around_index(center_3x3, size_3x3, 1)
+    pat8 = pat[idx].flatten()
+    pat64 = np.zeros(pat8.size*8)
+    for i, v in enumerate(pat8):
+        pat64[int(i*8+v)] = 1
+    return pat64
+
+
+def get_diamond_pattern(gs, c, symmetric=True, reverse=False):
+    """
+    """
+    if reverse:
+        state_map = reverse_vertex_state_map
+    else:
+        state_map = vertex_state_map
+
+    vtxes = get_diamond_enclosing_square(c, manhattan_d)
+    pat = np.array([state_map[get_vertex_state_key(
+        gs, vtx, gs.size, reverse=reverse)] for vtx in vtxes])
+    pat = pat.reshape((size_dia, size_dia))
+    # clear center
+    pat[int(size_dia / 2), int(size_dia / 2)] = 0
+    if symmetric:
+        symmetrics = [t(pat) for t in transformations]
+        minidx = np.argmin([np.sum(base_dia_color ** exp_dia * sym) for sym in symmetrics])
+        pat = symmetrics[minidx]
+
+    idx = get_diamond_index(center_dia, size_dia, manhattan_d)
+    pat12 = pat[idx].flatten()
+    pat96 = np.zeros(pat12.size*8)
+    for i, v in enumerate(pat12):
+        pat96[int(i*4+v)] = 1
+    return pat96
+
+
+def get_3x3_color_pattern(gs, c, symmetric=False, reverse=False):
+    """
+    """
+    vtxes = get_around(c)
+    pat = np.array([get_vertex_color(gs, vtx, gs.size, reverse=reverse) for vtx in vtxes])
+    pat = pat.reshape((size_3x3, size_3x3))
+    if symmetric:
+        symmetrics = [t(pat) for t in transformations]
+        minidx = np.argmin([np.sum(base_3x3_color ** exp_3x3 * sym) for sym in symmetrics])
+        pat = symmetrics[minidx]
+
+    idx = get_around_index(center_3x3, size_3x3, 1)
+    pat8 = pat[idx].flatten()
+    pat32 = np.zeros(pat8.size*4)
+    for i, v in enumerate(pat8):
+        pat32[int(i*4+v)] = 1
+    return pat32
+
+
+def get_diamond_color_pattern(gs, c, symmetric=True, reverse=False):
+    """
+    """
+    vtxes = get_diamond_enclosing_square(c, manhattan_d)
+    pat = np.array([get_vertex_color(gs, vtx, gs.size, reverse=reverse) for vtx in vtxes])
+    pat = pat.reshape((size_dia, size_dia))
+    # clear center
+    pat[center_dia[0], center_dia[1]] = 0
+    if symmetric:
+        symmetrics = [t(pat) for t in transformations]
+        minidx = np.argmin([np.sum(base_dia_color ** exp_dia * sym) for sym in symmetrics])
+        pat = symmetrics[minidx]
+
+    idx = get_diamond_index(center_dia, size_dia, manhattan_d)
+    pat12 = pat[idx].flatten()
+    pat48 = np.zeros(pat12.size*4)
+    for i, v in enumerate(pat12):
+        pat48[int(i*4+v)] = 1
+    return pat48
 
 
 def get_pattern_value(pat, base, exp):

@@ -4,9 +4,11 @@ import numpy as np
 from tqdm import tqdm
 
 
-n_feature = 43
+n_feature = 170
+#n_feature = 90
+#n_feature = 10
 K = 5
-lr = 0.01
+lr = 0.001
 iter_num = 1000
 test_size = .2
 
@@ -35,12 +37,11 @@ def cross_entropy_error(y, t):
 
 
 def run_training():
-    #rgen = np.random.RandomState(1)
-    #W = rgen.normal(loc=0.0, scale=0.01, size=n_feature)
-    W = np.empty(n_feature)
+    #W = 0.01 * np.random.randn(n_feature)
+    rgen = np.random.RandomState(1)
+    W = rgen.normal(loc=0.0, scale=0.01, size=n_feature)
 
-    #dataset = h5.File('./test.hdf5')
-    dataset = h5.File('./kgs500.hdf5')
+    dataset = h5.File('./rollout_features.hdf5')
 
     states = dataset['states']
     actions = dataset['actions']
@@ -62,6 +63,7 @@ def run_training():
 
         # train
         for j in tqdm(range(n_train)):
+            #import pdb; pdb.set_trace()
             X = states[train_indices[j]]
 
             # one-hot

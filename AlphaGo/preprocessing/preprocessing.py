@@ -275,7 +275,8 @@ def get_response_pattern(state, pat_dict):
             idx = pat_dict[key]
             for (x, y) in state.get_legal_moves():
                 if ptn.is_in_manhattan(state.history[-1], x, y):
-                    feature[x*state.size+y] = np.array([b for b in bin(idx)[2:].rjust(feature_len, '0')], dtype=np.byte)
+                    feature[x*state.size+y] = np.array([b for b in bin(idx)[2:].rjust(feature_len, '0')],
+                                                       dtype=np.byte)
                     #feature[x*state.size+y, idx] = 1
         except KeyError:
             pass
@@ -292,13 +293,77 @@ def get_non_response_pattern(state, pat_dict):
             reverse = True
         else:
             reverse = False
-        key = ptn.get_3x3_value(state, (x, y), symmetric=False, reverse=reverse)
-        try:
-            idx = pat_dict[key]
-            feature[x*state.size+y] = np.array([b for b in bin(idx)[2:].rjust(feature_len, '0')], dtype=np.byte)
-            #feature[x*state.size+y, idx] = 1
-        except KeyError:
-            pass
+        if not ptn.is_in_manhattan(state.history[-1], x, y):
+            key = ptn.get_3x3_value(state, (x, y), symmetric=False, reverse=reverse)
+            try:
+                idx = pat_dict[key]
+                feature[x*state.size+y] = np.array([b for b in bin(idx)[2:].rjust(feature_len, '0')],
+                                                   dtype=np.byte)
+                #feature[x*state.size+y, idx] = 1
+            except KeyError:
+                pass
+    return feature
+
+
+def get_response_pattern2(state):
+    """ Move matches 12-point diamond pattern near previous move
+    """
+    feature = np.zeros((state.size**2, 4*12))
+    if state.history:
+        if state.current_player == go.BLACK:
+            reverse = True
+        else:
+            reverse = False
+        pat = ptn.get_diamond_color_pattern(state, state.history[-1], symmetric=True, reverse=reverse)
+        for (x, y) in state.get_legal_moves():
+            if ptn.is_in_manhattan(state.history[-1], x, y):
+                feature[x*state.size+y] = pat
+    return feature
+
+
+def get_non_response_pattern2(state):
+    """ Move matches 3 x 3 pattern around move
+    """
+    feature = np.zeros((state.size**2, 4*8))
+    for (x, y) in state.get_legal_moves():
+        if state.current_player == go.WHITE:
+            reverse = True
+        else:
+            reverse = False
+        if not state.history or not ptn.is_in_manhattan(state.history[-1], x, y):
+            pat = ptn.get_3x3_color_pattern(state, (x, y), symmetric=False, reverse=reverse)
+            feature[x*state.size+y] = pat
+    return feature
+
+
+def get_response_pattern3(state):
+    """ Move matches 12-point diamond pattern near previous move
+    """
+    feature = np.zeros((state.size**2, 8*12))
+    if state.history:
+        if state.current_player == go.BLACK:
+            reverse = True
+        else:
+            reverse = False
+        pat = ptn.get_diamond_pattern(state, state.history[-1], symmetric=True, reverse=reverse)
+        for (x, y) in state.get_legal_moves():
+            if ptn.is_in_manhattan(state.history[-1], x, y):
+                feature[x*state.size+y] = pat
+    return feature
+
+
+def get_non_response_pattern3(state):
+    """ Move matches 3 x 3 pattern around move
+    """
+    feature = np.zeros((state.size**2, 8*8))
+    for (x, y) in state.get_legal_moves():
+        if state.current_player == go.WHITE:
+            reverse = True
+        else:
+            reverse = False
+        if not state.history or not ptn.is_in_manhattan(state.history[-1], x, y):
+            pat = ptn.get_3x3_pattern(state, (x, y), symmetric=False, reverse=reverse)
+            feature[x*state.size+y] = pat
     return feature
 
 
@@ -395,6 +460,22 @@ FEATURES = {
     },
     "non_response_pattern": {
         "function": get_non_response_pattern
+    },
+    "response_pattern2": {
+        "size": 48,
+        "function": get_response_pattern2
+    },
+    "non_response_pattern2": {
+        "size": 32,
+        "function": get_non_response_pattern2
+    },
+    "response_pattern3": {
+        "size": 96,
+        "function": get_response_pattern3
+    },
+    "non_response_pattern3": {
+        "size": 64,
+        "function": get_non_response_pattern3
     },
     # tree
     "distance": {

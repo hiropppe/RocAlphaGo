@@ -7,13 +7,17 @@ import os
 import warnings
 import sgf
 import h5py as h5
+import itertools
+import dill
+
+from concurrent.futures import ProcessPoolExecutor
 
 
 class SizeMismatchError(Exception):
     pass
 
 
-class GameConverter:
+class GameRolloutConverter:
 
     def __init__(self, pat_3x3_file, pat_dia_file, features):
         self.feature_processor = RolloutPreprocess(pat_3x3_file, pat_dia_file, features)
@@ -150,6 +154,102 @@ class GameConverter:
         os.rename(tmp_file, hdf5_file)
 
 
+class ParallelGameRolloutConverter:
+
+    def __init__(self, pat_3x3_file, pat_dia_file, features, nb_workers=2):
+        self.features = features
+        self.feature_processor = RolloutPreprocess(pat_3x3_file, pat_dia_file, features)
+        self.n_features = self.feature_processor.output_dim
+        self.nb_workers = nb_workers
+        self.pat_3x3_file = pat_3x3_file
+        self.pat_dia_file = pat_dia_file
+
+    def sgfs_to_hdf5(self, sgf_files, hdf5_file, bd_size, ignore_errors=True, verbose=False):
+        executor = ProcessPoolExecutor(max_workers=self.nb_workers)
+        sgf_files_copy = itertools.tee(sgf_files, self.nb_workers)
+        worker_hdf5_files = list()
+        for worker_idx in range(self.nb_workers):
+            worker_sgf_files = [sgf_file
+                                for i, sgf_file
+                                in enumerate(sgf_files_copy[worker_idx])
+                                if i % self.nb_workers == worker_idx]
+            worker_hdf5_file = hdf5_file + '.' + str(worker_idx)
+            worker_hdf5_files.append(worker_hdf5_file)
+            pat_3x3_file = self.pat_3x3_file
+            pat_dia_file = self.pat_dia_file
+            executor.submit(*pack_function(self.__sgfs_to_hdf5,
+                                           worker_sgf_files,
+                                           worker_hdf5_file,
+                                           pat_3x3_file,
+                                           pat_dia_file,
+                                           bd_size,
+                                           ignore_errors,
+                                           verbose))
+
+        try:
+            executor.shutdown()
+        except:
+            executor.shutdown(wait=False)
+
+        self.__merge_hdf5(hdf5_file, worker_hdf5_files, bd_size)
+
+    def __sgfs_to_hdf5(self, sgf_files, hdf5_file, pat_3x3_file, pat_dia_file, bd_size, ignore_errors, verbose):
+        converter = GameRolloutConverter(pat_3x3_file, pat_dia_file, self.features)
+        converter.sgfs_to_hdf5(sgf_files, hdf5_file, bd_size, ignore_errors, verbose)
+
+    def __merge_hdf5(self, hdf5_file, worker_hdf5_files, bd_size):
+        h5f = h5.File(hdf5_file, 'w')
+
+        states = h5f.require_dataset(
+            'states',
+            dtype=np.uint8,
+            shape=(1, bd_size**2, self.n_features),
+            maxshape=(None, bd_size**2, self.n_features),
+            exact=False,
+            chunks=(64, bd_size**2, self.n_features),
+            compression="lzf")
+        actions = h5f.require_dataset(
+            'actions',
+            dtype=np.uint8,
+            shape=(1, 2),
+            maxshape=(None, 2),
+            exact=False,
+            chunks=(1024, 2),
+            compression="lzf")
+
+        h5f['features'] = np.string_(','.join(self.feature_processor.feature_list))
+
+        next_idx = 0
+        for worker_hdf5_file in worker_hdf5_files:
+            worker_h5f = h5.File(worker_hdf5_file, 'r')
+
+            assert worker_h5f['states'].len() == worker_h5f['actions'].len()
+
+            data_len = worker_h5f['states'].len()
+            for data_idx in range(data_len):
+                if next_idx >= len(states):
+                    states.resize((next_idx + 1, bd_size**2, self.n_features))
+                    actions.resize((next_idx + 1, 2))
+                states[next_idx] = worker_h5f['states'][data_idx]
+                actions[next_idx] = worker_h5f['actions'][data_idx]
+                next_idx += 1
+
+            worker_h5f.close()
+
+        h5f.close()
+
+
+def apply_packed_function((dumped_function, item, args, kwargs),):
+    target_function = dill.loads(dumped_function)
+    res = target_function(item, *args, **kwargs)
+    return res
+
+
+def pack_function(target_function, item, *args, **kwargs):
+    dumped_function = dill.dumps(target_function)
+    return apply_packed_function, (dumped_function, item, args, kwargs)
+
+
 def run_game_converter(cmd_line_args=None):
     """Run conversions. command-line args may be passed in as a list
     """
@@ -169,6 +269,7 @@ def run_game_converter(cmd_line_args=None):
     parser.add_argument("--pat-3x3", help="3x3 pattern file", required=True)
     parser.add_argument("--pat-dia", help="Diamond pattern file", required=True)
     parser.add_argument("--verbose", "-v", help="Turn on verbose mode", default=False, action="store_true")  # noqa: E501
+    parser.add_argument("--workers", "-w", help="Number of workers to process SGF files", type=int, default=0)
 
     if cmd_line_args is None:
         args = parser.parse_args()
@@ -181,7 +282,12 @@ def run_game_converter(cmd_line_args=None):
             "save_atari",
             "neighbour",
             "response_pattern",
-            "non_response_pattern"]
+            "non_response_pattern",
+       #     "response_pattern2",
+       #     "non_response_pattern2",
+       #     "response_pattern3",
+       #     "non_response_pattern3",
+        ]
     elif args.features.lower() == 'tree':
         feature_list = [
             "response",
@@ -189,14 +295,18 @@ def run_game_converter(cmd_line_args=None):
             "neighbour",
             "response_pattern",
             "non_response_pattern"
-            "distance"]
+            "distance"
+        ]
     else:
         feature_list = args.features.split(",")
 
     if args.verbose:
         print("using features", feature_list)
 
-    converter = GameConverter(args.pat_3x3, args.pat_dia, feature_list)
+    if args.workers:
+        converter = ParallelGameRolloutConverter(args.pat_3x3, args.pat_dia, feature_list, args.workers)
+    else:
+        converter = GameRolloutConverter(args.pat_3x3, args.pat_dia, feature_list)
 
     def _is_sgf(fname):
         return fname.strip()[-4:] == ".sgf"
