@@ -5,11 +5,46 @@ from tqdm import tqdm
 
 
 n_feature = 170
-#n_feature = 90
-#n_feature = 10
-K = 5
+data_file = './roll_feat.hdf5'
+
+# response + save_atari + neighbour + pattern
+# n_feature = 10
+# data_file = './roll_feat1.hdf5'
+
+# response + save_atari + neighbour + pattern2
+# n_feature = 90
+# data_file = './roll_feat3.hdf5'
+
+# response + save_atari + neighbour + pattern3
+# n_feature = 170
+# data_file = './roll_feat3.hdf5'
+
+# response
+# n_feature = 1
+# data_file = './roll_feat_response.hdf5'
+
+# save-atari
+# n_feature = 1
+# data_file = './roll_feat_save_atari.hdf5'
+
+# neighbour
+# n_feature = 8
+# data_file = './roll_feat_neighbour.hdf5'
+
+# one-hot color pattern
+# n_feature = 48
+# data_file = './roll_feat_response_pattern2.hdf5'
+# n_feature = 32
+# data_file = './roll_feat_non_response_pattern2.hdf5'
+
+# one-hot color and liberty pattern
+# n_feature = 96
+# data_file = './roll_feat_response_pattern3.hdf5'
+# n_feature = 64
+# data_file = './roll_feat_non_response_pattern3.hdf5'
+
 lr = 0.001
-iter_num = 1000
+iter_num = 10
 test_size = .2
 
 
@@ -41,7 +76,7 @@ def run_training():
     rgen = np.random.RandomState(1)
     W = rgen.normal(loc=0.0, scale=0.01, size=n_feature)
 
-    dataset = h5.File('./rollout_features.hdf5')
+    dataset = h5.File(data_file)
 
     states = dataset['states']
     actions = dataset['actions']
