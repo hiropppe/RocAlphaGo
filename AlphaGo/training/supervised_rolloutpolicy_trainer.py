@@ -144,5 +144,6 @@ def run_training():
                       n_test_acc,
                       n_test))
 
+
 if __name__ == '__main__':
     run_training()
