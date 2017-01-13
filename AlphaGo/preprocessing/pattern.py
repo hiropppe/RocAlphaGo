@@ -263,7 +263,7 @@ def get_diamond_pattern(gs, c, symmetric=True, reverse=False):
     pat12 = pat[idx].flatten()
     pat96 = np.zeros(pat12.size*8)
     for i, v in enumerate(pat12):
-        pat96[int(i*4+v)] = 1
+        pat96[int(i*8+v)] = 1
     return pat96
 
 
