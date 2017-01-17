@@ -6,6 +6,8 @@ import AlphaGo.go as go
 import os
 import warnings
 import sgf
+import sys
+import traceback
 import h5py as h5
 import itertools
 import dill
@@ -227,11 +229,17 @@ class ParallelGameRolloutConverter:
 
             data_len = worker_h5f['states'].len()
             for data_idx in range(data_len):
+                try:
+                    state = worker_h5f['states'][data_idx]
+                    action = worker_h5f['actions'][data_idx]
+                except Exception, details:
+                    sys.stderr.write('%s\n' % details)
+                    sys.stderr.write(traceback.format_exc())
                 if next_idx >= len(states):
                     states.resize((next_idx + 1, bd_size**2, self.n_features))
                     actions.resize((next_idx + 1, 2))
-                states[next_idx] = worker_h5f['states'][data_idx]
-                actions[next_idx] = worker_h5f['actions'][data_idx]
+                states[next_idx] = state
+                actions[next_idx] = action
                 next_idx += 1
 
             worker_h5f.close()
