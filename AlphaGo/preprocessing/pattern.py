@@ -4,6 +4,8 @@ import numpy as np
 
 import AlphaGo.go as go
 
+from functools32 import lru_cache
+
 
 liberty_cap = 3
 
@@ -95,29 +97,33 @@ def get_index(center, distance_func, distance, board_size, reshape=True):
     return pat
 
 
+@lru_cache(maxsize=512)
 def get_around_index(center, board_size, distance=1, reshape=True):
     return get_index(center, is_around, distance, board_size, reshape)
 
 
+@lru_cache(maxsize=512)
 def get_diamond_index(center, board_size, distance=2, reshape=True):
     return get_index(center, is_in_manhattan, distance, board_size, reshape)
 
 
+@lru_cache(maxsize=512)
 def get_around(c, d=1):
     """ Return 3x3 indexes around specified center
     """
-    return tuple([(c[0] + i, c[1] + j)
-                  for i in range(-d, d + 1, 1)
-                  for j in range(-d, d + 1, 1)])
+    return [(c[0] + i, c[1] + j)
+            for i in range(-d, d + 1, 1)
+            for j in range(-d, d + 1, 1)]
 
 
+@lru_cache(maxsize=512)
 def get_diamond_enclosing_square(c, d=manhattan_d):
     """ Return indexes of square encloding manhattan diamond in d
         from specified center
     """
-    return tuple([(c[0] + i, c[1] + j) if is_in_manhattan(c, c[0] + i, c[1] + j, d) else None
-                  for i in range(-d, d + 1, 1)
-                  for j in range(-d, d + 1, 1)])
+    return [(c[0] + i, c[1] + j) if is_in_manhattan(c, c[0] + i, c[1] + j, d) else None
+            for i in range(-d, d + 1, 1)
+            for j in range(-d, d + 1, 1)]
 
 
 def get_vertex_state_key(gs, pos, board_size, reverse=False):
@@ -136,6 +142,7 @@ def get_vertex_state_key(gs, pos, board_size, reverse=False):
     return (color, liberty)
 
 
+@lru_cache(maxsize=8192)
 def get_vertex_color(gs, pos, board_size, reverse=False):
     """
     """
@@ -163,6 +170,8 @@ def get_3x3_value(gs, c, symmetric=False, reverse=False):
     pat = np.array([state_map[get_vertex_state_key(
         gs, vtx, gs.size, reverse=reverse)] for vtx in vtxes])
     pat = pat.reshape((size_3x3, size_3x3))
+    # clear center
+    pat[center_3x3[0], center_3x3[1]] = 0
     if symmetric:
         return min([np.sum(base_3x3 ** exp_3x3 * t(pat)) for t in transformations])
     else:
@@ -189,18 +198,22 @@ def get_diamond_value(gs, c, symmetric=True, reverse=False):
         return np.sum(base_dia ** exp_dia * pat)
 
 
+@lru_cache(maxsize=8192)
 def get_3x3_color_value(gs, c, symmetric=False, reverse=False):
     """
     """
     vtxes = get_around(c)
     pat = np.array([get_vertex_color(gs, vtx, gs.size, reverse=reverse) for vtx in vtxes])
     pat = pat.reshape((size_3x3, size_3x3))
+    # clear center
+    pat[center_3x3[0], center_3x3[1]] = 0
     if symmetric:
         return min([np.sum(base_3x3_color ** exp_3x3 * t(pat)) for t in transformations])
     else:
         return np.sum(base_3x3_color ** exp_3x3 * pat)
 
 
+@lru_cache(maxsize=8192)
 def get_diamond_color_value(gs, c, symmetric=True, reverse=False):
     """
     """
@@ -322,7 +335,7 @@ def get_min_pattern(pat, base, exp):
     return transformed[min_index], values[min_index], transformations[min_index]
 
 
-def playout(moves, indexes, center, symmetry=False):
+def playout(moves, indexes, center):
     gs = go.GameState(size=indexes.shape[0])
     pidx = 0
     for bidx, do in enumerate(indexes.flatten()):
@@ -333,39 +346,15 @@ def playout(moves, indexes, center, symmetry=False):
         stone = moves[pidx]
         pidx += 1
         try:
-            if stone == 0:
-                gs.do_move(go.PASS_MOVE)
-            elif stone == gs.current_player:
-                gs.do_move(action)
-            else:
-                gs.do_move(go.PASS_MOVE)
-                gs.do_move(action)
+            if stone in (go.BLACK, go.WHITE):
+                gs.do_move(action, stone)
         except go.IllegalMove:
             return None
 
-    if gs.current_player == go.WHITE:
-        gs.do_move(go.PASS_MOVE)
-
     try:
-        gs.do_move(center)
+        gs.do_move(center, go.BLACK)
+        gs.board[center[0], center[1]] = 0
     except go.IllegalMove:
         return None
 
-    base = np.array([3]*indexes.size).reshape((gs.size, gs.size))
-    exp = np.arange(indexes.size).reshape((gs.size, gs.size))
-
-    if symmetry:
-        min_board, min_value, min_func = get_min_pattern(gs.board, base, exp)
-
-        # get center after transform
-        tmp = np.zeros(gs.board.shape)
-        tmp[center[0], center[1]] = 1
-        tmp = min_func(tmp)
-        nonzero = tmp.nonzero()
-        new_center = zip(nonzero[0], nonzero[1])[0]
-        min_board[new_center[0], new_center[1]] = 0
-        return min_board, min_value, new_center
-    else:
-        value = get_pattern_value(gs.board, base, exp)
-        gs.board[center[0], center[1]] = 0
-        return gs.board, value, center
+    return gs.board

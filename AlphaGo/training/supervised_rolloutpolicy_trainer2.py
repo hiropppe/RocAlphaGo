@@ -8,20 +8,8 @@ from scipy.sparse import csr_matrix
 from tqdm import tqdm
 
 
-# n_feature = 182790
-# data_file = './sparse_roll_feat.hdf5'
-
-# response + save_atari + neighbour + pattern
-# n_feature = 10
-# data_file = './roll_feat1.hdf5'
-
-# response + save_atari + neighbour + pattern2
-# n_feature = 90
-# data_file = './roll_feat3.hdf5'
-
-# response + save_atari + neighbour + pattern3
-# n_feature = 170
-# data_file = './roll_feat3.hdf5'
+n_feature = 7512 + 175724 + 1 + 1 + 8 + 1
+data_file = './sparse_roll_feat.hdf5'
 
 # response
 # n_feature = 1
@@ -36,9 +24,9 @@ from tqdm import tqdm
 # data_file = './roll_feat_neighbour.hdf5'
 
 # one-hot color pattern
-n_feature = 175689 + 1
-data_file = './sparse_roll_feat_non_response_pattern.hdf5'
-# n_feature = 7090 + 1
+# n_feature = 7512 + 1
+# data_file = './sparse_roll_feat_non_response_pattern.hdf5'
+# n_feature = 175724 + 1
 # data_file = './sparse_roll_feat_response_pattern.hdf5'
 
 

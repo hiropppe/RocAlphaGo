@@ -9,9 +9,10 @@ from scipy.sparse import lil_matrix, csr_matrix, hstack
 def get_response(state):
     feature = lil_matrix((state.size**2, 1))
     if state.history and state.history[-1]:
-        for (x, y) in state.get_legal_moves():
-            if ptn.is_in_manhattan(state.history[-1], x, y):
-                feature[x*state.size+y] = 1
+        response = ptn.get_diamond_index(state.history[-1],
+                                         state.size,
+                                         reshape=False)
+        feature[response] = 1
     return feature.tocsr()
 
 
@@ -38,29 +39,13 @@ def get_neighbour(state):
     feature = lil_matrix((state.size**2, 8))
     if state.history and state.history[-1]:
         px, py = state.history[-1]
-        for (x, y) in state.get_legal_moves():
-            center = px*state.size + py
-            move = x*state.size + y
-
-            i = x*state.size + y
-            if move == center - state.size - 1:
-                feature[i, 0] = 1
-            elif move == center - state.size:
-                feature[i, 1] = 1
-            elif move == center - state.size + 1:
-                feature[i, 2] = 1
-            elif move == center - 1:
-                feature[i, 3] = 1
-            elif move == center + 1:
-                feature[i, 4] = 1
-            elif move == center + state.size - 1:
-                feature[i, 5] = 1
-            elif move == center + state.size:
-                feature[i, 6] = 1
-            elif move == center + state.size + 1:
-                feature[i, 7] = 1
-            else:
-                pass
+        center = px*state.size + py
+        for i, distance in enumerate([-(state.size+1), -state.size, -(state.size-1),
+                                      -1, 1,
+                                      state.size-1, state.size, state.size+1]):
+            x = center + distance
+            if 0 <= x and x < state.size**2:
+                feature[x, i] = 1
     return feature.tocsr()
 
 
@@ -74,14 +59,12 @@ def get_non_response_pattern(state, pat_dict):
             reverse = True
         else:
             reverse = False
-
         if state.history and state.history[-1] and not ptn.is_in_manhattan(state.history[-1], x, y):
             key = ptn.get_3x3_color_value(state, (x, y), symmetric=False, reverse=reverse)
             try:
                 idx = pat_dict[key]
                 feature[x*state.size+y, idx] = 1
             except KeyError:
-                import pdb; pdb.set_trace()
                 pass
     return feature.tocsr()
 
@@ -104,7 +87,6 @@ def get_response_pattern(state, pat_dict):
                 if ptn.is_in_manhattan(state.history[-1], x, y):
                     feature[x*state.size+y, idx] = 1
         except KeyError:
-            import pdb; pdb.set_trace()
             pass
     return feature.tocsr()
 

@@ -92,9 +92,9 @@ class GameRolloutConverter:
                 n_pairs = 0
                 try:
                     for state, move in self.convert_game(file_name, bd_size):
-                        # assert state.shape == (361, 182789 + 1), 'unexpected shape'
-                        # assert state.shape == (361, 7090 + 1), 'unexpected shape'  # non_response_pattern
-                        assert state.shape == (361, 175689 + 1), 'unexpected shape'  # response_pattern
+                        # assert state.shape == (361, 7512 + 175724 + 11), 'unexpected shape'
+                        # assert state.shape == (361, 7512 + 1), 'unexpected shape'  # non_response_pattern
+                        # assert state.shape == (361, 175724 + 1), 'unexpected shape'  # response_pattern
                         # assert state.shape == (361, 1 + 1), 'unexpected shape'  # save_atari
                         # assert state.shape == (361, 8 + 1), 'unexpected shape'  # neighbour 
                         if next_idx % group_size == 0:

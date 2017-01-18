@@ -34,16 +34,10 @@ def gen_pattern(input_file, output_file, f_pat_value, symmetric=False):
         # Replay board state
         for bidx, stone in enumerate(states[i].flatten()):
             action = ptn.get_position(bidx, board_size)
-            if stone == 0:
-                gs.do_move(go.PASS_MOVE)
-            elif stone == gs.current_player:
-                gs.do_move(action)
-            else:
-                gs.do_move(go.PASS_MOVE)
-                gs.do_move(action)
+            if stone in (go.BLACK, go.WHITE):
+                gs.do_move(action, stone)
 
         val = f_pat_value(gs, centers[i], symmetric, reverse=False)
-
         if val not in pat_dict:
             pat_dict[val] = pat_onehot_idx
             pat_onehot_idx += 1
