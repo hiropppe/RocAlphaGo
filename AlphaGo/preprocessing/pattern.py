@@ -4,8 +4,6 @@ import numpy as np
 
 import AlphaGo.go as go
 
-from functools32 import lru_cache
-
 
 liberty_cap = 3
 
@@ -97,17 +95,14 @@ def get_index(center, distance_func, distance, board_size, reshape=True):
     return pat
 
 
-@lru_cache(maxsize=512)
 def get_around_index(center, board_size, distance=1, reshape=True):
     return get_index(center, is_around, distance, board_size, reshape)
 
 
-@lru_cache(maxsize=512)
 def get_diamond_index(center, board_size, distance=2, reshape=True):
     return get_index(center, is_in_manhattan, distance, board_size, reshape)
 
 
-@lru_cache(maxsize=512)
 def get_around(c, d=1):
     """ Return 3x3 indexes around specified center
     """
@@ -116,7 +111,6 @@ def get_around(c, d=1):
             for j in range(-d, d + 1, 1)]
 
 
-@lru_cache(maxsize=512)
 def get_diamond_enclosing_square(c, d=manhattan_d):
     """ Return indexes of square encloding manhattan diamond in d
         from specified center
@@ -142,7 +136,6 @@ def get_vertex_state_key(gs, pos, board_size, reverse=False):
     return (color, liberty)
 
 
-@lru_cache(maxsize=8192)
 def get_vertex_color(gs, pos, board_size, reverse=False):
     """
     """
@@ -198,7 +191,6 @@ def get_diamond_value(gs, c, symmetric=True, reverse=False):
         return np.sum(base_dia ** exp_dia * pat)
 
 
-@lru_cache(maxsize=8192)
 def get_3x3_color_value(gs, c, symmetric=False, reverse=False):
     """
     """
@@ -213,7 +205,6 @@ def get_3x3_color_value(gs, c, symmetric=False, reverse=False):
         return np.sum(base_3x3_color ** exp_3x3 * pat)
 
 
-@lru_cache(maxsize=8192)
 def get_diamond_color_value(gs, c, symmetric=True, reverse=False):
     """
     """

@@ -44,17 +44,11 @@ data_file = './roll_feat.hdf5'
 # data_file = './roll_feat_non_response_pattern3.hdf5'
 
 lr = 0.001
-iter_num = 10
+iter_num = 1
 test_size = .2
 
 
 def softmax(x):
-    if x.ndim == 2:
-        x = x.T
-        x = x - np.max(x, axis=0)
-        y = np.exp(x) / np.sum(np.exp(x), axis=0)
-        return y.T
-
     x = x - np.max(x)
     return np.exp(x) / np.sum(np.exp(x))
 
@@ -72,7 +66,7 @@ def cross_entropy_error(y, t):
 
 
 def run_training():
-    #W = 0.01 * np.random.randn(n_feature)
+    # W = 0.01 * np.random.randn(n_feature)
     rgen = np.random.RandomState(1)
     W = rgen.normal(loc=0.0, scale=0.01, size=n_feature)
 
@@ -98,7 +92,7 @@ def run_training():
 
         # train
         for j in tqdm(range(n_train)):
-            #import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
             X = states[train_indices[j]]
 
             # one-hot
