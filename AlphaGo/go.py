@@ -65,6 +65,8 @@ class GameState(object):
             BLACK: rng.randint(np.iinfo(np.uint64).max, size=(size, size), dtype='uint64')}
         self.current_hash = np.uint64(0)
         self.previous_hashes = set()
+        # cache last liberty for each color
+        self.last_liberty_cache = {BLACK: set(), WHITE: set()}
 
     def get_group(self, position):
         """Get the group of connected same-color stones to the given position
@@ -562,6 +564,19 @@ class GameState(object):
                             if would_recapture and recapture_size_is_1:
                                 # note: (nx,ny) is the stone that was captured
                                 self.ko = (nx, ny)
+                    # Check neighbor atari
+                    elif self.board[nx, ny] == -color:
+                        if self.liberty_counts[nx, ny] == 1:
+                            last_liberty = next(iter(self.liberty_sets[nx][ny]))
+                            self.last_liberty_cache[-color].add(last_liberty)
+                        elif (nx, ny) in self.last_liberty_cache[-color]:
+                            self.last_liberty_cache[-color].remove((nx, ny))
+                # Check self atari
+                if (x, y) in self.last_liberty_cache[color]:
+                    self.last_liberty_cache[color].remove((x, y))
+                if self.liberty_counts[x, y] == 1:
+                    last_liberty = next(iter(self.liberty_sets[x][y]))
+                    self.last_liberty_cache[color].add(last_liberty)
                 # _remove_group has finished updating the hash
                 self.previous_hashes.add(self.current_hash)
             else:

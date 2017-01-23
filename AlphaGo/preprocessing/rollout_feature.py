@@ -59,9 +59,9 @@ class RolloutFeature(object):
             for y in range(self.size):
                 RolloutFeature.__NEIGHBOR8_CACHE[(x, y)] = self._get_neighbor8((x, y))
 
-    def update(self, state):
-        if state.history:
-            prev_move = state.history[-1]
+    def update(self):
+        if self.state.history:
+            prev_move = self.state.history[-1]
         else:
             prev_move = None
 
@@ -69,16 +69,15 @@ class RolloutFeature(object):
         self.update_save_atari()
 
     def update_save_atari(self):
-        for (x, y) in self.state.get_legal_moves():
-            for neighbor_group in self.state.get_groups_around((x, y)):
-                (gx, gy) = next(iter(neighbor_group))
-                if self.state.board[gx, gy] == self.state.current_player:
-                    lib_count = self.state.liberty_counts[gx][gy]
-                    if lib_count == 1:
-                        (lx, ly) = next(iter(self.state.liberty_sets[gx][gy]))
-                        lib_set_after = self.state.liberty_sets[lx][ly]
-                        if len(lib_set_after) >= 2:
-                            self.feature[lx*self.state.size+ly, self.idx_save_atari[0]] = 1
+        self.feature[:, self.idx_save_atari[0]] = 0
+        for (x, y) in self.state.last_liberty_cache[self.state.current_player]:
+            if len(self.state.liberty_sets[x][y]) > 1:
+                self.feature[x*self.size + y, self.idx_save_atari[0]] = 1
+            else:
+                for (nx, ny) in self.state._neighbors((x, y)):
+                    if (self.state.board[nx, ny] == self.state.current_player
+                       and self.state.liberty_counts[nx, ny] > 1):
+                        self.feature[x*self.size + y, self.idx_save_atari[0]] = 1
 
     def update_neighbors(self, prev_move):
         # clear previous neighbors
