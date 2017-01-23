@@ -59,7 +59,7 @@ def get_non_response_pattern(state, pat_dict):
             reverse = True
         else:
             reverse = False
-        if state.history and state.history[-1] and not ptn.is_in_manhattan(state.history[-1], x, y):
+        if not state.history or not state.history[-1] or not ptn.is_in_manhattan(state.history[-1], x, y):
             key = ptn.get_3x3_color_value(state, (x, y), symmetric=False, reverse=reverse)
             try:
                 idx = pat_dict[key]

@@ -1,47 +1,36 @@
 import h5py as h5
 import numpy as np
+import time
 
 from tqdm import tqdm
 
 
 n_feature = 170
-data_file = './roll_feat.hdf5'
-
-# response + save_atari + neighbour + pattern
-# n_feature = 10
-# data_file = './roll_feat1.hdf5'
-
-# response + save_atari + neighbour + pattern2
-# n_feature = 90
-# data_file = './roll_feat3.hdf5'
-
-# response + save_atari + neighbour + pattern3
-# n_feature = 170
-# data_file = './roll_feat3.hdf5'
+data_file = './rollout.hdf5'
 
 # response
 # n_feature = 1
-# data_file = './roll_feat_response.hdf5'
+# data_file = './response_d.hdf5'
 
 # save-atari
 # n_feature = 1
-# data_file = './roll_feat_save_atari.hdf5'
+# data_file = './save_atari_d.hdf5'
 
 # neighbour
 # n_feature = 8
-# data_file = './roll_feat_neighbour.hdf5'
+# data_file = './neighbour_d.hdf5'
 
 # one-hot color pattern
 # n_feature = 48
-# data_file = './roll_feat_response_pattern2.hdf5'
+# data_file = './response_pattern2_d.hdf5'
 # n_feature = 32
-# data_file = './roll_feat_non_response_pattern2.hdf5'
+# data_file = './non_response_pattern2_d.hdf5'
 
 # one-hot color and liberty pattern
 # n_feature = 96
-# data_file = './roll_feat_response_pattern3.hdf5'
+# data_file = './response_pattern3_d.hdf5'
 # n_feature = 64
-# data_file = './roll_feat_non_response_pattern3.hdf5'
+# data_file = './non_response_pattern3_d.hdf5'
 
 lr = 0.001
 iter_num = 1
@@ -99,7 +88,7 @@ def run_training():
             t = np.zeros(board_size**2)
             a = actions[train_indices[j]]
             t[a[0]*board_size+a[1]] = 1
-
+ 
             y = softmax(np.dot(X, W))
             loss = cross_entropy_error(y, t)
 

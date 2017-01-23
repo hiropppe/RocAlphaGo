@@ -209,7 +209,7 @@ def get_legal(state):
 
 def get_response(state):
     feature = np.zeros((state.size**2, 1))
-    if 0 < len(state.history):
+    if state.history and state.history[-1]:
         for (x, y) in state.get_legal_moves():
             if ptn.is_in_manhattan(state.history[-1], x, y):
                 feature[x*state.size+y] = 1
@@ -237,7 +237,7 @@ def get_neighbour(state):
     """ Move is 8-connected to previous move
     """
     feature = np.zeros((state.size**2, 8))
-    if 0 < len(state.history):
+    if state.history and state.history[-1]:
         px, py = state.history[-1]
         for (x, y) in state.get_legal_moves():
             center = px*state.size + py
@@ -270,7 +270,7 @@ def get_response_pattern(state, pat_dict):
     """
     feature_len = len(bin(len(pat_dict)))-2
     feature = np.zeros((state.size**2, feature_len))
-    if state.history:
+    if state.history and state.history[-1]:
         if state.current_player == go.BLACK:
             reverse = True
         else:
@@ -314,7 +314,7 @@ def get_response_pattern2(state):
     """ Move matches 12-point diamond pattern near previous move
     """
     feature = np.zeros((state.size**2, 4*12))
-    if state.history:
+    if state.history and state.history[-1]:
         if state.current_player == go.BLACK:
             reverse = True
         else:
@@ -335,7 +335,7 @@ def get_non_response_pattern2(state):
             reverse = True
         else:
             reverse = False
-        if not state.history or not ptn.is_in_manhattan(state.history[-1], x, y):
+        if not state.history or not state.history[-1] or not ptn.is_in_manhattan(state.history[-1], x, y):
             pat = ptn.get_3x3_color_pattern(state, (x, y), symmetric=False, reverse=reverse)
             feature[x*state.size+y] = pat
     return feature
@@ -345,7 +345,7 @@ def get_response_pattern3(state):
     """ Move matches 12-point diamond pattern near previous move
     """
     feature = np.zeros((state.size**2, 8*12))
-    if state.history:
+    if state.history and state.history[-1]:
         if state.current_player == go.BLACK:
             reverse = True
         else:
@@ -366,7 +366,7 @@ def get_non_response_pattern3(state):
             reverse = True
         else:
             reverse = False
-        if not state.history or not ptn.is_in_manhattan(state.history[-1], x, y):
+        if not state.history or not state.history[-1] or not ptn.is_in_manhattan(state.history[-1], x, y):
             pat = ptn.get_3x3_pattern(state, (x, y), symmetric=False, reverse=reverse)
             feature[x*state.size+y] = pat
     return feature

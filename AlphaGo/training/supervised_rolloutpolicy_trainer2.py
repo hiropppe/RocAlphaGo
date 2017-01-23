@@ -9,25 +9,25 @@ from tqdm import tqdm
 
 
 n_feature = 7512 + 175724 + 1 + 1 + 8 + 1
-data_file = './sparse_roll_feat.hdf5'
+data_file = './sparse_rollout.hdf5'
 
 # response
-# n_feature = 1
-# data_file = './roll_feat_response.hdf5'
+# n_feature = 1 + 1
+# data_file = './response.hdf5'
 
 # save-atari
-# n_feature = 1
-# data_file = './roll_feat_save_atari.hdf5'
+# n_feature = 1 + 1
+# data_file = './save_atari.hdf5'
 
 # neighbour
-# n_feature = 8
-# data_file = './roll_feat_neighbour.hdf5'
+# n_feature = 8 + 1
+# data_file = './neighbour.hdf5'
 
 # one-hot color pattern
 # n_feature = 7512 + 1
-# data_file = './sparse_roll_feat_non_response_pattern.hdf5'
+# data_file = './non_response_pattern.hdf5'
 # n_feature = 175724 + 1
-# data_file = './sparse_roll_feat_response_pattern.hdf5'
+# data_file = './response_pattern.hdf5'
 
 
 lr = 0.001

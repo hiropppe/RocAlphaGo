@@ -13,6 +13,7 @@ import itertools
 import dill
 
 from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
 
 
 class SizeMismatchError(Exception):
@@ -104,7 +105,7 @@ class GameRolloutConverter:
                 print("created HDF5 dataset in {}".format(tmp_file))
 
             next_idx = 0
-            for file_name in sgf_files:
+            for file_name in tqdm(sgf_files):
                 if verbose:
                     print(file_name)
                 # count number of state/action pairs yielded by this game
