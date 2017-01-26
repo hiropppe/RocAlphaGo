@@ -3,7 +3,6 @@
 """
 #cython: wraparound=False
 """
-
 import numpy as np
 
 cimport numpy as np
@@ -35,34 +34,34 @@ cdef class RolloutFeature(object):
     cdef int ix_3x3
     cdef int ix_12d
 
-    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_CACHE
+    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_FEATURE_CACHE
+    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_INDEX_CACHE
 
     cdef pair[vector[int], vector[int]] _prev_neighbors
 
-    def __init__(self, b_size, pat3x3_file=None, pat12d_file=None):
+    cdef unordered_map[long long, int] pattern_3x3
+    cdef unordered_map[long long, int] pattern_12d
+
+    cdef np.ndarray prev_board
+
+    def __init__(self, b_size, f_pattern_3x3=None, f_pattern_12d=None):
         self.b_size = b_size
         self.n_position = self.b_size * self.b_size
 
         self.n_response = 1
         self.n_save_atari = 1
         self.n_neighbor = 8
+        self.n_3x3 = 4500
+        self.n_12d = 2300
 
-        if pat3x3_file or pat12d_file:
-            try:
-                import cPickle as pkl
-            except:
-                import pickle as pkl
-
-            if pat3x3_file:
-                self.pat3x3 = pkl.load(open(pat3x3_file))
-                self.n_3x3 = len(self.pat3x3)
-
-            if pat12d_file:
-                self.pat12d = pkl.load(open(pat12d_file))
-                self.n_12d = len(self.pat12d)
-        else:
-            self.n_3x3 = 69338
-            self.n_12d = 32207
+        if f_pattern_3x3 or f_pattern_12d:
+            import ast
+            if f_pattern_3x3:
+                with open(f_pattern_3x3) as f:
+                    self.pattern_3x3 = ast.literal_eval(f.read())
+            if f_pattern_12d:
+                with open(f_pattern_12d) as f:
+                    self.pattern_12d = ast.literal_eval(f.read())
 
         self.n_feature = self.n_response + self.n_save_atari + self.n_neighbor + self.n_3x3 + self.n_12d
 
@@ -82,19 +81,32 @@ cdef class RolloutFeature(object):
     def _create_neighbor8_cache(self):
         for x in range(self.b_size):
             for y in range(self.b_size):
-                (ix, iy) = self._get_neighbor8((x, y))
                 position = x*self.b_size+y
-                self.__NEIGHBOR8_CACHE[position].first = ix
-                self.__NEIGHBOR8_CACHE[position].second = iy
+                (fx, fy) = self._get_neighbor8_feature((x, y))
+                self.__NEIGHBOR8_FEATURE_CACHE[position].first = fx
+                self.__NEIGHBOR8_FEATURE_CACHE[position].second = fy
+                # ignoring outermost
+                if not (x < 1 or y < 1 or x >= self.b_size - 1 or y >= self.b_size - 1):
+                    (ix, iy) = self._get_neighbor8_index((x, y))
+                    self.__NEIGHBOR8_INDEX_CACHE[position].first = ix
+                    self.__NEIGHBOR8_INDEX_CACHE[position].second = iy
 
-    def _get_neighbor8(self, center):
-        (x, y) = center
-        neighbors = [(x-1, y-1), (x-1, y), (x-1, y+1),
-                     (x,   y-1),           (x,   y+1),
-                     (x+1, y-1), (x+1, y), (x+1, y+1)]
+    def _get_neighbor8_index(self, center):
+        neighbors = self._get_neighbor8(center)
+        xy = np.array(neighbors)
+        return (list(xy[:, 0]), list(xy[:, 1]))
+
+    def _get_neighbor8_feature(self, center):
+        neighbors = self._get_neighbor8(center)
         xy = np.array([[nx*self.b_size + ny, self.ix_neighbor+i]
                        for i, (nx, ny) in enumerate(neighbors) if self._on_board((nx, ny))])
         return (list(xy[:, 0]), list(xy[:, 1]))
+
+    def _get_neighbor8(self, center):
+        (x, y) = center
+        return [(x-1, y-1), (x-1, y), (x-1, y+1),
+                (x,   y-1),           (x,   y+1),
+                (x+1, y-1), (x+1, y), (x+1, y+1)]
 
     def _on_board(self, position):
         (x, y) = position
@@ -110,6 +122,45 @@ cdef class RolloutFeature(object):
 
         self.update_neighbors(prev_position, feature)
         self.update_save_atari(state, feature)
+        self.update_non_response_3x3(state, feature)
+
+        self.prev_board = state.board.copy()
+
+    def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+        cdef long long pattern_key
+        cdef int xy, pattern_idx, fx, fy, cx, cy
+        cdef int vlen, clen
+
+        if not state.history or not state.history[-1]:
+            return
+
+        if len(state.history) == 1:
+            updated_vertexes = [state.history[-1]]
+        else:
+            updated_vertexes = np.where(state.board-self.prev_board != 0) 
+            updated_vertexes = zip(updated_vertexes[0], updated_vertexes[1])
+
+        vlen = len(updated_vertexes)
+        for i in range(vlen):
+            (cx, cy) = updated_vertexes[i]
+            if cx < 1 or cy < 1 or cx >= self.b_size - 1 or cy >= self.b_size - 1:
+                continue
+
+            xy = cx*self.b_size + cy
+            ix_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].first
+            iy_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].second
+
+            centers = zip(ix_3x3, iy_3x3)
+            clen = len(centers)
+            for j in range(clen):
+                (x, y) = centers[j]
+                #if state.is_legal((x, y)):
+                pattern_key = self.get_3x3_hash(state, (x, y))
+                pattern_idx = self.pattern_3x3[pattern_key]
+                fx = x*self.b_size+y
+                fy = self.ix_3x3 + pattern_idx
+                if(self.pattern_3x3.end() != self.pattern_3x3.find(pattern_key)):
+                    feature[fx, fy] = 1
 
     def update_neighbors(self, prev_position, np.ndarray[DTYPE_t, ndim=2] feature):
         # clear previous neighbors
@@ -120,7 +171,7 @@ cdef class RolloutFeature(object):
 
         if 0 < prev_position:
             # set new neighbors
-            prev = self.__NEIGHBOR8_CACHE[prev_position]
+            prev = self.__NEIGHBOR8_FEATURE_CACHE[prev_position]
             nx = prev.first
             ny = prev.second
             feature[nx, ny] = 1
@@ -139,6 +190,52 @@ cdef class RolloutFeature(object):
                         feature[x*self.b_size + y, self.ix_save_atari] = 1
 
 
+    def get_3x3_hash(self, state, center):
+        cdef long long pattern_hash
+        cdef vector[int] ix_3x3, iy_3x3, ixy_3x3
+        cdef vector[int] color_3x3, liberty_3x3
+        cdef int x, y, xy 
+
+        (x, y) = center
+        # position is to close to the edge
+        if x < 1 or y < 1 or x >= self.b_size - 1 or y >= self.b_size - 1:
+            return -1
+
+        # active player colour
+        pattern_hash = 2L
+        pattern_hash += long(state.current_player)
+        pattern_hash *= 10L
+
+        xy = x * self.b_size + y
+        ix_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].first
+        iy_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].second
+        # 8 surrounding position colours
+        color_3x3 = state.board[ix_3x3, iy_3x3]
+        for color in color_3x3:
+            pattern_hash += color + 2L
+            pattern_hash *= 10L
+        # 8 surrounding position liberties
+        liberty_3x3 = state.liberty_counts[ix_3x3, iy_3x3]
+        for liberty in liberty_3x3:
+            pattern_hash += min(liberty, 3)
+            pattern_hash *= 10
+
+        """
+        ixy_3x3 = self.__NEIGHBOR8_FEATURE_CACHE[z].first
+        for xy in ixy_3x3:
+            # 8 surrounding position colours
+            nx = xy / self.b_size
+            ny = xy % self.b_size
+            pattern_hash += state.board[nx, ny] + 2L
+            pattern_hash *= 10L
+            # 8 surrounding position liberties
+            pattern_hash += min(state.liberty_counts[nx, ny], 3 )
+            pattern_hash *= 10
+        """
+
+        return pattern_hash / 10
+
+
 def timeit():
     """ Testing performance
     """
@@ -149,14 +246,14 @@ def timeit():
     import AlphaGo.go as go
 
     b_size = 19
-    rf = RolloutFeature(b_size)
+    rf = RolloutFeature(b_size, f_pattern_3x3='./patterns/dict_non_response_3x3_max_4500.pat')
     
     cdef np.ndarray[DTYPE_t, ndim=2] F
-    F = np.zeros((b_size**2, rf.n_position), dtype=DTYPE)
+    F = np.zeros((b_size**2, rf.n_feature), dtype=DTYPE)
 
     elapsed_s = list()
     num_error = 0
-    for i in xrange(100):
+    for i in xrange(200):
         gs = go.GameState()
 
         empties = range(361)
