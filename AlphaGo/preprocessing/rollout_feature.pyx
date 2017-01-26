@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""
 #cython: boundscheck=False
+"""
 #cython: wraparound=False
 """
 
@@ -18,8 +18,8 @@ ctypedef np.int_t DTYPE_t
 
 
 cdef class RolloutFeature(object):
-    cdef int size
-    cdef int n_position
+    cdef int b_size
+    cdef public int n_position
 
     cdef int n_response
     cdef int n_save_atari
@@ -39,10 +39,9 @@ cdef class RolloutFeature(object):
 
     cdef pair[vector[int], vector[int]] _prev_neighbors
 
-    def __init__(self, state, pat3x3_file=None, pat12d_file=None):
-
-        self.size = state.size
-        self.n_position = self.size * self.size
+    def __init__(self, b_size, pat3x3_file=None, pat12d_file=None):
+        self.b_size = b_size
+        self.n_position = self.b_size * self.b_size
 
         self.n_response = 1
         self.n_save_atari = 1
@@ -73,35 +72,39 @@ cdef class RolloutFeature(object):
         self.ix_3x3 = self.ix_neighbor + self.n_neighbor
         self.ix_12d = self.ix_3x3 + self.n_3x3
 
-        self._create_neighbor8_cache(state)
+        self._create_neighbor8_cache()
 
         cdef vector[int] ix
         cdef vector[int] iy
         self._prev_neighbors.first = ix
         self._prev_neighbors.second = iy
 
-    def _create_neighbor8_cache(self, state):
-        for x in range(self.size):
-            for y in range(self.size):
-                (ix, iy) = self._get_neighbor8(state, (x, y))
-                position = x*self.size+y
+    def _create_neighbor8_cache(self):
+        for x in range(self.b_size):
+            for y in range(self.b_size):
+                (ix, iy) = self._get_neighbor8((x, y))
+                position = x*self.b_size+y
                 self.__NEIGHBOR8_CACHE[position].first = ix
                 self.__NEIGHBOR8_CACHE[position].second = iy
 
-    def _get_neighbor8(self, state, center):
+    def _get_neighbor8(self, center):
         (x, y) = center
         neighbors = [(x-1, y-1), (x-1, y), (x-1, y+1),
                      (x,   y-1),           (x,   y+1),
                      (x+1, y-1), (x+1, y), (x+1, y+1)]
-        xy = np.array([[nx*self.size + ny, self.ix_neighbor+i]
-                       for i, (nx, ny) in enumerate(neighbors) if state._on_board((nx, ny))])
+        xy = np.array([[nx*self.b_size + ny, self.ix_neighbor+i]
+                       for i, (nx, ny) in enumerate(neighbors) if self._on_board((nx, ny))])
         return (list(xy[:, 0]), list(xy[:, 1]))
+
+    def _on_board(self, position):
+        (x, y) = position
+        return x >= 0 and y >= 0 and x < self.b_size and y < self.b_size
 
     def update(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         #cdef int prev_position
         if state.history:
             prev_move = state.history[-1]
-            prev_position = prev_move[0]*self.size+prev_move[1]
+            prev_position = prev_move[0]*self.b_size+prev_move[1]
         else:
             prev_position = -1
 
@@ -128,18 +131,12 @@ cdef class RolloutFeature(object):
         feature[:, self.ix_save_atari] = 0
         for (x, y) in state.last_liberty_cache[state.current_player]:
             if len(state.liberty_sets[x][y]) > 1:
-                feature[x*self.size + y, self.ix_save_atari] = 1
+                feature[x*self.b_size + y, self.ix_save_atari] = 1
             else:
                 for (nx, ny) in state._neighbors((x, y)):
                     if (state.board[nx, ny] == state.current_player
                        and state.liberty_counts[nx, ny] > 1):
-                        feature[x*self.size + y, self.ix_save_atari] = 1
-
-    def get_tensor(self):
-        pass
-
-    def get_sparse_tensor(self):
-        pass
+                        feature[x*self.b_size + y, self.ix_save_atari] = 1
 
 
 def timeit():
@@ -151,14 +148,17 @@ def timeit():
     import traceback
     import AlphaGo.go as go
 
+    b_size = 19
+    rf = RolloutFeature(b_size)
+    
     cdef np.ndarray[DTYPE_t, ndim=2] F
-    F = np.zeros((361, 101555), dtype=DTYPE)
+    F = np.zeros((b_size**2, rf.n_position), dtype=DTYPE)
 
     elapsed_s = list()
     num_error = 0
     for i in xrange(100):
         gs = go.GameState()
-        rf = RolloutFeature(gs)
+
         empties = range(361)
         for j in range(200):
             move = random.choice(empties)
@@ -174,5 +174,4 @@ def timeit():
                 # sys.stderr.write("{}\n".format(traceback.format_exc()))
                 num_error += 1
                 continue
-
     print("Avg. {:.3f}us Err. {:d}".format(np.mean(elapsed_s)*1000*1000, num_error))
