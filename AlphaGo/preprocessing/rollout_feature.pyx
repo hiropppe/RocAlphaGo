@@ -7,13 +7,19 @@ import numpy as np
 
 cimport numpy as np
 
+from libcpp.pair cimport pair
 from libcpp.vector cimport vector
 from libcpp.unordered_map cimport unordered_map
-from libcpp.pair cimport pair
+
 
 DTYPE = np.int
 
 ctypedef np.int_t DTYPE_t
+
+
+cdef enum:
+    color_shift = 2
+    max_liberty_count = 3
 
 
 cdef class RolloutFeature(object):
@@ -34,8 +40,8 @@ cdef class RolloutFeature(object):
     cdef int ix_3x3
     cdef int ix_12d
 
+    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR4_INDEX_CACHE
     cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_FEATURE_CACHE
-    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_INDEX_CACHE
 
     cdef pair[vector[int], vector[int]] _prev_neighbors
 
@@ -79,28 +85,38 @@ cdef class RolloutFeature(object):
         self._prev_neighbors.second = iy
 
     def _create_neighbor8_cache(self):
-        for x in range(self.b_size):
-            for y in range(self.b_size):
+        for x in xrange(self.b_size):
+            for y in xrange(self.b_size):
                 position = x*self.b_size+y
                 (fx, fy) = self._get_neighbor8_feature((x, y))
                 self.__NEIGHBOR8_FEATURE_CACHE[position].first = fx
                 self.__NEIGHBOR8_FEATURE_CACHE[position].second = fy
-                # ignoring outermost
+                # ignoring outermost vertexes which includes out-of-board
                 if not (x < 1 or y < 1 or x >= self.b_size - 1 or y >= self.b_size - 1):
-                    (ix, iy) = self._get_neighbor8_index((x, y))
-                    self.__NEIGHBOR8_INDEX_CACHE[position].first = ix
-                    self.__NEIGHBOR8_INDEX_CACHE[position].second = iy
+                    (ix, iy) = self._get_neighbor4_index((x, y))
+                    self.__NEIGHBOR4_INDEX_CACHE[position].first = ix
+                    self.__NEIGHBOR4_INDEX_CACHE[position].second = iy
 
-    def _get_neighbor8_index(self, center):
-        neighbors = self._get_neighbor8(center)
+    def _get_neighbor4_index(self, center):
+        """Returns neighbor8 index pair ([r0, r1, r2, r3], [c0, c1, c2, c3])
+        """
+        neighbors = self._get_neighbor4(center)
         xy = np.array(neighbors)
         return (list(xy[:, 0]), list(xy[:, 1]))
 
     def _get_neighbor8_feature(self, center):
+        """Returns nenighbor feature index ([np0, np1, .. np7], [ni0, ni1, .. ni7])
+        """
         neighbors = self._get_neighbor8(center)
         xy = np.array([[nx*self.b_size + ny, self.ix_neighbor+i]
                        for i, (nx, ny) in enumerate(neighbors) if self._on_board((nx, ny))])
         return (list(xy[:, 0]), list(xy[:, 1]))
+
+    def _get_neighbor4(self, center):
+        (x, y) = center
+        return [          (x-1, y),
+                (x, y-1),           (x, y+1),
+                          (x+1, y)          ]
 
     def _get_neighbor8(self, center):
         (x, y) = center
@@ -113,7 +129,7 @@ cdef class RolloutFeature(object):
         return x >= 0 and y >= 0 and x < self.b_size and y < self.b_size
 
     def update(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
-        #cdef int prev_position
+        cdef int prev_position
         if state.history:
             prev_move = state.history[-1]
             prev_position = prev_move[0]*self.b_size+prev_move[1]
@@ -128,37 +144,52 @@ cdef class RolloutFeature(object):
 
     def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         cdef long long pattern_key
-        cdef int xy, pattern_idx, fx, fy, cx, cy
-        cdef int vlen, clen
+        cdef int pattern_id
+        cdef int difference_size
+        cdef int gx, gy, cp, cx, cy, nx, ny, fx, fy
+        cdef vector[int] updated_positions
 
         if not state.history or not state.history[-1]:
             return
 
-        if len(state.history) == 1:
-            updated_vertexes = [state.history[-1]]
+        # For each first move check only last move
+        # otherwise we obtain vertexes which affects neighbor 3x3 pattern
+        # from board difference to previous board
+        if len(state.history) <= 2:
+            board_diff = [state.history[-1]]
         else:
-            updated_vertexes = np.where(state.board-self.prev_board != 0) 
-            updated_vertexes = zip(updated_vertexes[0], updated_vertexes[1])
+            board_diff = np.where(state.board-self.prev_board != 0) 
+            board_diff = zip(board_diff[0], board_diff[1])
 
-        vlen = len(updated_vertexes)
-        for i in range(vlen):
-            (cx, cy) = updated_vertexes[i]
+        # Obtain group (ren) of updated vertex
+        # which may change color or liberty count
+        difference_size = len(board_diff)
+        for i in xrange(difference_size):
+            (dx, dy) = board_diff[i]
+            group = state.group_sets[dx][dy]
+            if group:
+                for (gx, gy) in group:
+                    updated_positions.push_back(gx*self.b_size+gy)
+
+        # Update pattern around updated vertexes
+        # pattern_updated = set()
+        for cp in updated_positions:
+            cx = cp / self.b_size
+            cy = cp % self.b_size
             if cx < 1 or cy < 1 or cx >= self.b_size - 1 or cy >= self.b_size - 1:
                 continue
 
-            xy = cx*self.b_size + cy
-            ix_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].first
-            iy_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].second
+            neighbor4_index = self.__NEIGHBOR4_INDEX_CACHE[cp]
+            ix4 = neighbor4_index.first
+            iy4 = neighbor4_index.second
 
-            centers = zip(ix_3x3, iy_3x3)
-            clen = len(centers)
-            for j in range(clen):
-                (x, y) = centers[j]
-                #if state.is_legal((x, y)):
-                pattern_key = self.get_3x3_hash(state, (x, y))
-                pattern_idx = self.pattern_3x3[pattern_key]
-                fx = x*self.b_size+y
-                fy = self.ix_3x3 + pattern_idx
+            centers = zip(ix4, iy4)
+            for j in xrange(4):
+                (nx, ny) = centers[j]
+                pattern_key = self.get_3x3_hash(state, (nx, ny))
+                pattern_id = self.pattern_3x3[pattern_key]
+                fx = nx*self.b_size+ny
+                fy = self.ix_3x3 + pattern_id
                 if(self.pattern_3x3.end() != self.pattern_3x3.find(pattern_key)):
                     feature[fx, fy] = 1
 
@@ -189,51 +220,46 @@ cdef class RolloutFeature(object):
                        and state.liberty_counts[nx, ny] > 1):
                         feature[x*self.b_size + y, self.ix_save_atari] = 1
 
-
     def get_3x3_hash(self, state, center):
-        cdef long long pattern_hash
-        cdef vector[int] ix_3x3, iy_3x3, ixy_3x3
+        cdef long long pattern = 0
+        cdef int x, y, p
+        cdef vector[int] ix_3x3, iy_3x3
         cdef vector[int] color_3x3, liberty_3x3
-        cdef int x, y, xy 
 
         (x, y) = center
         # position is to close to the edge
         if x < 1 or y < 1 or x >= self.b_size - 1 or y >= self.b_size - 1:
             return -1
 
-        # active player colour
-        pattern_hash = 2L
-        pattern_hash += long(state.current_player)
-        pattern_hash *= 10L
+        p = x * self.b_size + y
+        ix_3x3 = self.__NEIGHBOR4_INDEX_CACHE[p].first
+        iy_3x3 = self.__NEIGHBOR4_INDEX_CACHE[p].second
 
-        xy = x * self.b_size + y
-        ix_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].first
-        iy_3x3 = self.__NEIGHBOR8_INDEX_CACHE[xy].second
+        pattern = state.current_player + color_shift
+
         # 8 surrounding position colours
         color_3x3 = state.board[ix_3x3, iy_3x3]
-        for color in color_3x3:
-            pattern_hash += color + 2L
-            pattern_hash *= 10L
+        pattern = pattern * 10  + color_3x3[0] + color_shift
+        pattern = pattern * 10  + color_3x3[1] + color_shift
+        pattern = pattern * 10  + color_3x3[2] + color_shift
+        pattern = pattern * 10  + color_3x3[3] + color_shift
+        pattern = pattern * 10  + color_3x3[4] + color_shift
+        pattern = pattern * 10  + color_3x3[5] + color_shift
+        pattern = pattern * 10  + color_3x3[6] + color_shift
+        pattern = pattern * 10  + color_3x3[7] + color_shift
+
         # 8 surrounding position liberties
         liberty_3x3 = state.liberty_counts[ix_3x3, iy_3x3]
-        for liberty in liberty_3x3:
-            pattern_hash += min(liberty, 3)
-            pattern_hash *= 10
+        pattern = pattern * 10 + min(liberty_3x3[0], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[1], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[2], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[3], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[4], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[5], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[6], max_liberty_count)
+        pattern = pattern * 10 + min(liberty_3x3[7], max_liberty_count)
 
-        """
-        ixy_3x3 = self.__NEIGHBOR8_FEATURE_CACHE[z].first
-        for xy in ixy_3x3:
-            # 8 surrounding position colours
-            nx = xy / self.b_size
-            ny = xy % self.b_size
-            pattern_hash += state.board[nx, ny] + 2L
-            pattern_hash *= 10L
-            # 8 surrounding position liberties
-            pattern_hash += min(state.liberty_counts[nx, ny], 3 )
-            pattern_hash *= 10
-        """
-
-        return pattern_hash / 10
+        return pattern
 
 
 def timeit():
@@ -257,18 +283,19 @@ def timeit():
         gs = go.GameState()
 
         empties = range(361)
-        for j in range(200):
+        for j in xrange(200):
             move = random.choice(empties)
             empties.remove(move)
             x = int(move / 19)
             y = int(move % 19)
             try:
-                gs.do_move((x, y))
                 s = time.time()
+                gs.do_move((x, y))
                 rf.update(gs, F)
                 elapsed_s.append(time.time() - s)
             except go.IllegalMove:
                 # sys.stderr.write("{}\n".format(traceback.format_exc()))
                 num_error += 1
                 continue
+
     print("Avg. {:.3f}us Err. {:d}".format(np.mean(elapsed_s)*1000*1000, num_error))
