@@ -23,30 +23,31 @@ cdef enum:
 
 
 cdef class RolloutFeature(object):
-    cdef int b_size
+    cdef public int b_size
     cdef public int n_position
+    cdef public int n_feature
+
+    cdef public unordered_map[long long, int] pattern_3x3
+    cdef public unordered_map[long long, int] pattern_12d
+
+    cdef public int ix_response
+    cdef public int ix_save_atari
+    cdef public int ix_neighbor
+    cdef public int ix_3x3
+    cdef public int ix_12d
 
     cdef int n_response
     cdef int n_save_atari
     cdef int n_neighbor
-    cdef int n_feature
 
     cdef int n_3x3
     cdef int n_12d
 
-    cdef int ix_response
-    cdef int ix_save_atari
-    cdef int ix_neighbor
-    cdef int ix_3x3
-    cdef int ix_12d
-
     cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR4_INDEX_CACHE
+    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_INDEX_CACHE
     cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_FEATURE_CACHE
 
     cdef pair[vector[int], vector[int]] _prev_neighbors
-
-    cdef unordered_map[long long, int] pattern_3x3
-    cdef unordered_map[long long, int] pattern_12d
 
     cdef np.ndarray prev_board
 
@@ -84,6 +85,8 @@ cdef class RolloutFeature(object):
         self._prev_neighbors.first = ix
         self._prev_neighbors.second = iy
 
+        self.prev_board = np.zeros((b_size, b_size), dtype=np.int)
+
     def _create_neighbor8_cache(self):
         for x in xrange(self.b_size):
             for y in xrange(self.b_size):
@@ -93,9 +96,14 @@ cdef class RolloutFeature(object):
                 self.__NEIGHBOR8_FEATURE_CACHE[position].second = fy
                 # ignoring outermost vertexes which includes out-of-board
                 if not (x < 1 or y < 1 or x >= self.b_size - 1 or y >= self.b_size - 1):
-                    (ix, iy) = self._get_neighbor4_index((x, y))
-                    self.__NEIGHBOR4_INDEX_CACHE[position].first = ix
-                    self.__NEIGHBOR4_INDEX_CACHE[position].second = iy
+                    # cache neighbor4
+                    (ix4, iy4) = self._get_neighbor4_index((x, y))
+                    self.__NEIGHBOR4_INDEX_CACHE[position].first = ix4
+                    self.__NEIGHBOR4_INDEX_CACHE[position].second = iy4
+                    # cache neighbor8
+                    (ix8, iy8) = self._get_neighbor8_index((x, y))
+                    self.__NEIGHBOR8_INDEX_CACHE[position].first = ix8
+                    self.__NEIGHBOR8_INDEX_CACHE[position].second = iy8
 
     def _get_neighbor4_index(self, center):
         """Returns neighbor8 index pair ([r0, r1, r2, r3], [c0, c1, c2, c3])
@@ -104,8 +112,15 @@ cdef class RolloutFeature(object):
         xy = np.array(neighbors)
         return (list(xy[:, 0]), list(xy[:, 1]))
 
+    def _get_neighbor8_index(self, center):
+        """Returns neighbor8 index pair ([r0, r1, .., r7], [c0, c1, .., c7])
+        """
+        neighbors = self._get_neighbor8(center)
+        xy = np.array(neighbors)
+        return (list(xy[:, 0]), list(xy[:, 1]))
+
     def _get_neighbor8_feature(self, center):
-        """Returns nenighbor feature index ([np0, np1, .. np7], [ni0, ni1, .. ni7])
+        """Returns nenighbor feature index ([np0, np1, .., np7], [ni0, ni1, .., ni7])
         """
         neighbors = self._get_neighbor8(center)
         xy = np.array([[nx*self.b_size + ny, self.ix_neighbor+i]
@@ -186,7 +201,7 @@ cdef class RolloutFeature(object):
             centers = zip(ix4, iy4)
             for j in xrange(4):
                 (nx, ny) = centers[j]
-                pattern_key = self.get_3x3_hash(state, (nx, ny))
+                pattern_key = self.get_3x3_key(state, (nx, ny))
                 pattern_id = self.pattern_3x3[pattern_key]
                 fx = nx*self.b_size+ny
                 fy = self.ix_3x3 + pattern_id
@@ -200,7 +215,7 @@ cdef class RolloutFeature(object):
             prev_ny = self._prev_neighbors.second
             feature[prev_nx, prev_ny] = 0
 
-        if 0 < prev_position:
+        if 0 <= prev_position:
             # set new neighbors
             prev = self.__NEIGHBOR8_FEATURE_CACHE[prev_position]
             nx = prev.first
@@ -220,7 +235,7 @@ cdef class RolloutFeature(object):
                        and state.liberty_counts[nx, ny] > 1):
                         feature[x*self.b_size + y, self.ix_save_atari] = 1
 
-    def get_3x3_hash(self, state, center):
+    def get_3x3_key(self, state, center):
         cdef long long pattern = 0
         cdef int x, y, p
         cdef vector[int] ix_3x3, iy_3x3
@@ -232,8 +247,8 @@ cdef class RolloutFeature(object):
             return -1
 
         p = x * self.b_size + y
-        ix_3x3 = self.__NEIGHBOR4_INDEX_CACHE[p].first
-        iy_3x3 = self.__NEIGHBOR4_INDEX_CACHE[p].second
+        ix_3x3 = self.__NEIGHBOR8_INDEX_CACHE[p].first
+        iy_3x3 = self.__NEIGHBOR8_INDEX_CACHE[p].second
 
         pattern = state.current_player + color_shift
 
@@ -250,14 +265,14 @@ cdef class RolloutFeature(object):
 
         # 8 surrounding position liberties
         liberty_3x3 = state.liberty_counts[ix_3x3, iy_3x3]
-        pattern = pattern * 10 + min(liberty_3x3[0], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[1], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[2], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[3], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[4], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[5], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[6], max_liberty_count)
-        pattern = pattern * 10 + min(liberty_3x3[7], max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[0], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[1], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[2], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[3], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[4], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[5], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[6], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_3x3[7], 0), max_liberty_count)
 
         return pattern
 
