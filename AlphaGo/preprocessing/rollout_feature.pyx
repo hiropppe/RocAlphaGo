@@ -94,16 +94,14 @@ cdef class RolloutFeature(object):
                 (fx, fy) = self._get_neighbor8_feature((x, y))
                 self.__NEIGHBOR8_FEATURE_CACHE[position].first = fx
                 self.__NEIGHBOR8_FEATURE_CACHE[position].second = fy
-                # ignoring outermost vertexes which includes out-of-board
-                if not (x < 1 or y < 1 or x >= self.b_size - 1 or y >= self.b_size - 1):
-                    # cache neighbor4
-                    (ix4, iy4) = self._get_neighbor4_index((x, y))
-                    self.__NEIGHBOR4_INDEX_CACHE[position].first = ix4
-                    self.__NEIGHBOR4_INDEX_CACHE[position].second = iy4
-                    # cache neighbor8
-                    (ix8, iy8) = self._get_neighbor8_index((x, y))
-                    self.__NEIGHBOR8_INDEX_CACHE[position].first = ix8
-                    self.__NEIGHBOR8_INDEX_CACHE[position].second = iy8
+                # cache neighbor4
+                (ix4, iy4) = self._get_neighbor4_index((x, y))
+                self.__NEIGHBOR4_INDEX_CACHE[position].first = ix4
+                self.__NEIGHBOR4_INDEX_CACHE[position].second = iy4
+                # cache neighbor8
+                (ix8, iy8) = self._get_neighbor8_index((x, y))
+                self.__NEIGHBOR8_INDEX_CACHE[position].first = ix8
+                self.__NEIGHBOR8_INDEX_CACHE[position].second = iy8
 
     def _get_neighbor4_index(self, center):
         """Returns neighbor8 index pair ([r0, r1, r2, r3], [c0, c1, c2, c3])
@@ -144,10 +142,15 @@ cdef class RolloutFeature(object):
         return x >= 0 and y >= 0 and x < self.b_size and y < self.b_size
 
     def update(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
-        cdef int prev_position
+        """
+        """
+        cdef int px, py, prev_position
+
         if state.history:
             prev_move = state.history[-1]
-            prev_position = prev_move[0]*self.b_size+prev_move[1]
+            if prev_move:
+                (px, py) = prev_move
+                prev_position = px*self.b_size+py
         else:
             prev_position = -1
 
@@ -155,60 +158,9 @@ cdef class RolloutFeature(object):
         self.update_save_atari(state, feature)
         self.update_non_response_3x3(state, feature)
 
-        self.prev_board = state.board.copy()
-
-    def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
-        cdef long long pattern_key
-        cdef int pattern_id
-        cdef int difference_size
-        cdef int gx, gy, cp, cx, cy, nx, ny, fx, fy
-        cdef vector[int] updated_positions
-
-        if not state.history or not state.history[-1]:
-            return
-
-        # For each first move check only last move
-        # otherwise we obtain vertexes which affects neighbor 3x3 pattern
-        # from board difference to previous board
-        if len(state.history) <= 2:
-            board_diff = [state.history[-1]]
-        else:
-            board_diff = np.where(state.board-self.prev_board != 0) 
-            board_diff = zip(board_diff[0], board_diff[1])
-
-        # Obtain group (ren) of updated vertex
-        # which may change color or liberty count
-        difference_size = len(board_diff)
-        for i in xrange(difference_size):
-            (dx, dy) = board_diff[i]
-            group = state.group_sets[dx][dy]
-            if group:
-                for (gx, gy) in group:
-                    updated_positions.push_back(gx*self.b_size+gy)
-
-        # Update pattern around updated vertexes
-        # pattern_updated = set()
-        for cp in updated_positions:
-            cx = cp / self.b_size
-            cy = cp % self.b_size
-            if cx < 1 or cy < 1 or cx >= self.b_size - 1 or cy >= self.b_size - 1:
-                continue
-
-            neighbor4_index = self.__NEIGHBOR4_INDEX_CACHE[cp]
-            ix4 = neighbor4_index.first
-            iy4 = neighbor4_index.second
-
-            centers = zip(ix4, iy4)
-            for j in xrange(4):
-                (nx, ny) = centers[j]
-                pattern_key = self.get_3x3_key(state, (nx, ny))
-                pattern_id = self.pattern_3x3[pattern_key]
-                fx = nx*self.b_size+ny
-                fy = self.ix_3x3 + pattern_id
-                if(self.pattern_3x3.end() != self.pattern_3x3.find(pattern_key)):
-                    feature[fx, fy] = 1
-
     def update_neighbors(self, prev_position, np.ndarray[DTYPE_t, ndim=2] feature):
+        """
+        """
         # clear previous neighbors
         if not self._prev_neighbors.first.empty():
             prev_nx = self._prev_neighbors.first
@@ -225,6 +177,8 @@ cdef class RolloutFeature(object):
             self._prev_neighbors.second = ny
 
     def update_save_atari(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+        """
+        """
         feature[:, self.ix_save_atari] = 0
         for (x, y) in state.last_liberty_cache[state.current_player]:
             if len(state.liberty_sets[x][y]) > 1:
@@ -235,7 +189,75 @@ cdef class RolloutFeature(object):
                        and state.liberty_counts[nx, ny] > 1):
                         feature[x*self.b_size + y, self.ix_save_atari] = 1
 
+    def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+        """
+        """
+        cdef vector[int] updated_positions
+
+        # Get updated positions by previous move
+        updated_positions = self.get_updated_positions(state)
+
+        # Update pattern around positions
+        self.update_3x3_around(state, updated_positions, feature)
+
+    def get_updated_positions(self, state):
+        """
+        """
+        cdef vector[int] updated_positions
+        cdef int difference_size, gx, gy
+
+        # For each first move check only last move
+        # otherwise we obtain vertexes which affects neighbor 3x3 pattern
+        # from board difference to previous board
+        if not state.history or not state.history[-1]:
+            return updated_positions
+
+        if len(state.history) <= 2:
+            board_diff = [state.history[-1]]
+        else:
+            board_diff = np.where(state.board-self.prev_board != 0) 
+            board_diff = zip(board_diff[0], board_diff[1])
+        # Save board
+        self.prev_board = state.board.copy()
+
+        # Obtain group (ren) of updated vertex
+        # which color or liberty count may change
+        difference_size = len(board_diff)
+        for i in xrange(difference_size):
+            (dx, dy) = board_diff[i]
+            group = state.group_sets[dx][dy]
+            if group:
+                for (gx, gy) in group:
+                    updated_positions.push_back(gx*self.b_size+gy)
+
+        return updated_positions
+
+    def update_3x3_around(self, state, vector[int] updated_positions, np.ndarray[DTYPE_t, ndim=2] feature):
+        """
+        """
+        cdef long long pattern_key
+        cdef int pattern_id
+        cdef int cp, nx, ny, fx, fy
+        
+        # Update pattern around updated vertexes
+        for cp in updated_positions:
+            neighbor8_index = self.__NEIGHBOR8_INDEX_CACHE[cp]
+            ix8 = neighbor8_index.first
+            iy8 = neighbor8_index.second
+            centers = zip(ix8, iy8)
+            for j in xrange(8):
+                (nx, ny) = centers[j]
+                pattern_key = self.get_3x3_key(state, (nx, ny))
+                if pattern_key >= 0:
+                    if(self.pattern_3x3.end() != self.pattern_3x3.find(pattern_key)):
+                        pattern_id = self.pattern_3x3[pattern_key]
+                        fx = nx*self.b_size+ny
+                        fy = self.ix_3x3 + pattern_id
+                        feature[fx, fy] = 1
+
     def get_3x3_key(self, state, center):
+        """
+        """
         cdef long long pattern = 0
         cdef int x, y, p
         cdef vector[int] ix_3x3, iy_3x3
@@ -254,14 +276,14 @@ cdef class RolloutFeature(object):
 
         # 8 surrounding position colours
         color_3x3 = state.board[ix_3x3, iy_3x3]
-        pattern = pattern * 10  + color_3x3[0] + color_shift
-        pattern = pattern * 10  + color_3x3[1] + color_shift
-        pattern = pattern * 10  + color_3x3[2] + color_shift
-        pattern = pattern * 10  + color_3x3[3] + color_shift
-        pattern = pattern * 10  + color_3x3[4] + color_shift
-        pattern = pattern * 10  + color_3x3[5] + color_shift
-        pattern = pattern * 10  + color_3x3[6] + color_shift
-        pattern = pattern * 10  + color_3x3[7] + color_shift
+        pattern = pattern * 10 + color_3x3[0] + color_shift
+        pattern = pattern * 10 + color_3x3[1] + color_shift
+        pattern = pattern * 10 + color_3x3[2] + color_shift
+        pattern = pattern * 10 + color_3x3[3] + color_shift
+        pattern = pattern * 10 + color_3x3[4] + color_shift
+        pattern = pattern * 10 + color_3x3[5] + color_shift
+        pattern = pattern * 10 + color_3x3[6] + color_shift
+        pattern = pattern * 10 + color_3x3[7] + color_shift
 
         # 8 surrounding position liberties
         liberty_3x3 = state.liberty_counts[ix_3x3, iy_3x3]
