@@ -30,6 +30,21 @@ class GreedyPolicyPlayer(object):
         # No 'sensible' moves available, so do pass move
         return go.PASS_MOVE
 
+    def get_moves(self, states):
+        """Batch version of get_move. A list of moves is returned (one per state)
+        """
+        sensible_move_lists = [[move for move in st.get_legal_moves(include_eyes=False)]
+                               for st in states]
+        all_moves_distributions = self.policy.batch_eval_state(states, sensible_move_lists)
+        move_list = [None] * len(states)
+        for i, move_probs in enumerate(all_moves_distributions):
+            if len(move_probs) == 0 or len(states[i].history) > self.move_limit:
+                move_list[i] = go.PASS_MOVE
+            else:
+                max_prob = max(move_probs, key=itemgetter(1))
+                move_list[i] = max_prob[0]
+        return move_list
+
 
 class ProbabilisticPolicyPlayer(object):
     """A player that samples a move in proportion to the probability given by the
