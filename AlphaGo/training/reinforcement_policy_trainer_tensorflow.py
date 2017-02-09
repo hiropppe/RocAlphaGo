@@ -9,28 +9,26 @@ import tensorflow as tf
 
 import AlphaGo.go as go
 
-import AlphaGo.training.rl_policy as policy
+from AlphaGo.training import rl_policy
 
 from shutil import copyfile
 
-from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
+from AlphaGo.ai import GreedyPolicyPlayer
 from AlphaGo.models.policy import CNNPolicy
 from AlphaGo.util import flatten_idx
 
 
 flags = tf.app.flags
-flags.DEFINE_integer('num_games', 2, 'Game batch size.')
+flags.DEFINE_integer('num_games', 1, 'Game batch size.')
 flags.DEFINE_integer('max_steps', 10, 'Max step size.')
 flags.DEFINE_float('learning_rate', 1e-3, 'Initial learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 
 flags.DEFINE_integer('save_every', 2, 'Save policy as a new opponent every n batch.')
-flags.DEFINE_integer('checkpoint_every', 2, 'Save policy parameter every n batch.')
 flags.DEFINE_integer('summarize_every', 1, 'Write summary every n batch.')
 
 flags.DEFINE_string('model_json', './model/policy.json', 'SL Policy model json')
-flags.DEFINE_string('initial_weights', './model/policy_tf.hdf5', 'SL Policy weights hdf5')
-# flags.DEFINE_string('sl_weights', './model/policy.hdf5', 'SL Policy weights hdf5')
+flags.DEFINE_string('initial_weights', './model/policy.hdf5', 'SL Policy weights hdf5')
 
 flags.DEFINE_string('train_directory', './logs', 'Directory where to write train logs')
 
@@ -39,47 +37,26 @@ flags.DEFINE_boolean('verbose', True, '')
 FLAGS = flags.FLAGS
 
 
-def one_hot_action(action, size=19):
-    """Convert an (x,y) action into a size x size array of zeros with a 1 at x,y
-    """
-    categorical = np.zeros((size, size))
-    categorical[action] = 1
-    return categorical
-
-
-def game_generator(metadata):
-    weights = FLAGS.initial_weights
-
-    policy = CNNPolicy.load_model(FLAGS.model_json)
-    policy.model.load_weights(weights)
-    # player = ProbabilisticPolicyPlayer(policy, temperature=0.67, move_limit=500)
-    player = GreedyPolicyPlayer(policy, move_limit=500)
-
-    opp_policy = CNNPolicy.load_model(FLAGS.model_json)
-    # opponent = ProbabilisticPolicyPlayer(opp_policy, temperature=0.67, move_limit=500)
-    opponent = GreedyPolicyPlayer(opp_policy, move_limit=500)
-
+def game_generator(player, opponent, metadata):
     for step in xrange(FLAGS.max_steps):
-        opp_weights = np.random.choice(metadata["opponents"])
-        opp_weights = os.path.join(FLAGS.train_directory, opp_weights)
+        opponent_weights = np.random.choice(metadata["opponents"])
+        opponent_weights = os.path.join(FLAGS.train_directory, opponent_weights)
+        opponent.policy.model.load_weights(opponent_weights)
         if FLAGS.verbose:
-            print("Batch {}\tsampled opponent is {}".format(step, opp_weights))
+            print("Batch {}\tsampled opponent is {}".format(step, opponent_weights))
 
         win_ratio, states, actions, rewards = playout_n(player, opponent, FLAGS.num_games)
 
-        metadata["win_ratio"][weights] = (opp_weights, win_ratio)
-
-        with open(os.path.join(FLAGS.train_directory, "metadata.json"), "w") as f:
-            json.dump(metadata, f, sort_keys=True, indent=2)
-
-        yield (states, actions, rewards)
+        yield (win_ratio, states, actions, rewards)
 
 
 def _make_training_pair(st, mv, preprocessor):
     st_tensor = preprocessor.state_to_tensor(st)
-    # (1, f, bs, bs) -> (1, bs, bs, f)
-    st_shape = st_tensor.shape
-    st_tensor = st_tensor[0].transpose().reshape(1, st_shape[2], st_shape[3], st_shape[1])
+    # Transpose input(state) dimention ordering.
+    # TF uses the last dimension as channel dimension,
+    # K input shape: (samples, input_depth, row, cols)
+    # TF input shape: (samples, rows, cols, input_depth)
+    st_tensor = st_tensor.transpose((0, 2, 3, 1))
     mv_tensor = np.zeros((1, st.size * st.size))
     mv_tensor[(0, flatten_idx(mv, st.size))] = 1
     return (st_tensor, mv_tensor)
@@ -147,32 +124,21 @@ def playout_n(learner, opponent, num_games, value=zero_baseline):
 
 
 def main(argv=None):
-    ZEROTH_FILE = "weights.00000.hdf5"
-
-    if FLAGS.resume:
-        if not os.path.exists(os.path.join(FLAGS.train_directory, "metadata.json")):
-            raise ValueError("Cannot resume without existing output directory")
-
-    if not os.path.exists(FLAGS.train_directory):
-        if FLAGS.verbose:
-            print("creating output directory {}".format(FLAGS.train_directory))
-        os.makedirs(FLAGS.train_directory)
-
     if not FLAGS.resume:
-        initial_weights = os.path.join(FLAGS.train_directory, ZEROTH_FILE) 
+        if not os.path.exists(FLAGS.train_directory):
+            if FLAGS.verbose:
+                print("creating output directory {}".format(FLAGS.train_directory))
+            os.makedirs(FLAGS.train_directory)
+
+        ZEROTH_FILE = "weights.00000.hdf5"
+
+        initial_weights = os.path.join(FLAGS.train_directory, ZEROTH_FILE)
         copyfile(FLAGS.initial_weights, initial_weights)
+
         if FLAGS.verbose:
             print("copied {} to {}".format(FLAGS.initial_weights,
                                            os.path.join(FLAGS.train_directory, ZEROTH_FILE)))
-    else:
-        initial_weights = os.path.join(FLAGS.train_directory,
-                                       os.path.basename(FLAGS.initial_weights))
-        if not os.path.exists(FLAGS.initial_weights):
-            raise ValueError("Cannot resume; weights {} do not exist".format(FLAGS.initial_weights))
-        elif FLAGS.verbose:
-            print("Resuming with weights {}".format(FLAGS.initial_weights))
 
-    if not FLAGS.resume:
         metadata = {
             "model_file": FLAGS.model_json,
             "init_weights": os.path.basename(initial_weights),
@@ -184,28 +150,45 @@ def main(argv=None):
                              # validating in lieu of 'accuracy/loss'
         }
     else:
+        if not os.path.exists(os.path.join(FLAGS.train_directory, "metadata.json")):
+            raise ValueError("Cannot resume without existing output directory")
+
         with open(os.path.join(FLAGS.train_directory, "metadata.json"), "r") as f:
             metadata = json.load(f)
 
-    # RL policy training by raw tensorflow
-    model_weights = h5.File(initial_weights)
+        initial_weights = os.path.join(FLAGS.train_directory, FLAGS.initial_weights)
+
+        if not os.path.exists(initial_weights):
+            raise ValueError("Cannot resume; weights {} do not exist".format(initial_weights))
+        elif FLAGS.verbose:
+            print("Resuming with weights {}".format(initial_weights))
+
+    # RL policy training on TF
+    weights = h5.File(initial_weights)
+    model_weights = weights['model_weights']
 
     with tf.Graph().as_default():
+        # Define placeholder
         states = tf.placeholder(tf.float32,
                                 shape=(None,
-                                       policy.BOARD_SIZE,
-                                       policy.BOARD_SIZE,
-                                       policy.NUM_CHANNELS))
-        actions = tf.placeholder(tf.float32, shape=(None, policy.BOARD_SIZE**2))
+                                       rl_policy.BOARD_SIZE,
+                                       rl_policy.BOARD_SIZE,
+                                       rl_policy.NUM_CHANNELS))
+        actions = tf.placeholder(tf.float32,
+                                 shape=(None, rl_policy.BOARD_SIZE**2))
         rewards = tf.placeholder(tf.float32, shape=(None,))
 
-        probs = policy.inference(states, model_weights)
+        # Forward
+        probs = rl_policy.inference(states, model_weights)
 
-        loss = policy.loss(probs, actions, rewards)
+        # Compute loss
+        loss = rl_policy.loss(probs, actions, rewards)
 
-        acc = policy.accuracy(probs, actions)
+        # Check accuracy for actual actions
+        acc = rl_policy.accuracy(probs, actions)
 
-        train = policy.train(loss, FLAGS.learning_rate, rewards)
+        # Train
+        train = rl_policy.train(loss, FLAGS.learning_rate, rewards)
 
         # Build the summary Tensor based on the TF collection of Summaries.
         summary = tf.summary.merge_all()
@@ -220,22 +203,54 @@ def main(argv=None):
 
         sess.run(init)
 
-        train_game_generator = game_generator(metadata)
+        # Prepare playout data generator
+        player_weights = opponent_weights = initial_weights
+
+        player_policy = CNNPolicy.load_model(FLAGS.model_json)
+        player = GreedyPolicyPlayer(player_policy, move_limit=500)
+        player_policy.model.load_weights(player_weights)
+
+        opponent_policy = CNNPolicy.load_model(FLAGS.model_json)
+        opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
+
+        train_game_generator = game_generator(player, opponent, metadata)
+
         step = 0
-        for (state_batch, action_batch, reward_batch) in train_game_generator:
+        for (win_ratio, state_batch, action_batch, reward_batch) in train_game_generator:
             start_time = time.time()
-            step += 1
 
             feed_dict = {
                 states: state_batch,
                 actions: action_batch,
                 rewards: reward_batch
             }
-            # probs_value = sess.run(probs, feed_dict)
-            # import pdb; pdb.set_trace()
+
+            """
+            # Debug computation results
+            clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
+            good_probs = tf.reduce_sum(tf.mul(clip_probs, actions), reduction_indices=[1])
+            good_probs_value = sess.run(good_probs, feed_dict)
+
+            log_good_probs = tf.log(good_probs)
+            log_good_probs_value = sess.run(log_good_probs, feed_dict)
+
+            log_good_probs_mean = tf.reduce_mean(log_good_probs)
+            log_good_probs_mean_value = sess.run(log_good_probs_mean, feed_dict)
+            """
+            import pdb; pdb.set_trace()
             _, loss_value, acc_value = sess.run([train, loss, acc], feed_dict)
 
             duration = time.time() - start_time
+
+            # Update win_ratio
+            metadata["win_ratio"][player_weights] = (opponent_weights, win_ratio)
+            with open(os.path.join(FLAGS.train_directory, "metadata.json"), "w") as f:
+                json.dump(metadata, f, sort_keys=True, indent=2)
+
+            # Save Keras model weights then reload player weights
+            player_weights = rl_policy.save_keras_weights(sess, step + 1)
+            player_weights = os.path.join(FLAGS.train_directory, player_weights)
+            player.policy.model.load_weights(player_weights)
 
             # Write the summaries and print an overview fairly often.
             if step % FLAGS.summarize_every == 0:
@@ -246,12 +261,18 @@ def main(argv=None):
                 summary_writer.add_summary(summary_str, step)
                 summary_writer.flush()
 
+            # Write checkpoint file
             if (step + 1) % 1000 == 0 or (step + 1) == FLAGS.max_steps:
                 checkpoint_file = os.path.join(FLAGS.train_directory, 'model.ckpt')
-                saver.save(sess, checkpoint_file, global_step=step)
+                saver.save(sess, checkpoint_file, global_step=step)    
 
             if (step + 1) == FLAGS.max_steps:
                 break
+
+            step += 1
+
+    # close h5
+    weights.close()
 
 
 if __name__ == '__main__':
