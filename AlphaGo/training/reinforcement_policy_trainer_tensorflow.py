@@ -50,6 +50,30 @@ def game_generator(player, opponent, metadata):
         yield (win_ratio, states, actions, rewards)
 
 
+def create_game_generator(step, player_weights, metadata):
+    player_policy = CNNPolicy.load_model(FLAGS.model_json)
+    player = GreedyPolicyPlayer(player_policy, move_limit=500)
+    player_policy.model.load_weights(os.path.join(FLAGS.train_directory, player_weights))
+
+    opponent_policy = CNNPolicy.load_model(FLAGS.model_json)
+    opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
+    # sampling opponent from pool
+    opponent_weights = np.random.choice(metadata["opponents"])
+    opponent.policy.model.load_weights(os.path.join(FLAGS.train_directory, opponent_weights))
+
+    if FLAGS.verbose:
+        print("[Batch {}]\tplayer: {} opponent: {}".format(step, player_weights, opponent_weights))
+
+    win_ratio, states, actions, rewards = playout_n(player, opponent, FLAGS.num_games)
+
+    # Update win_ratio
+    metadata["win_ratio"][player_weights] = (opponent_weights, win_ratio)
+    with open(os.path.join(FLAGS.train_directory, "metadata.json"), "w") as f:
+        json.dump(metadata, f, sort_keys=True, indent=2)
+
+    yield (win_ratio, states, actions, rewards)
+
+
 def _make_training_pair(st, mv, preprocessor):
     st_tensor = preprocessor.state_to_tensor(st)
     # Transpose input(state) dimention ordering.
@@ -141,7 +165,7 @@ def main(argv=None):
 
         metadata = {
             "model_file": FLAGS.model_json,
-            "init_weights": os.path.basename(initial_weights),
+            "init_weights": initial_weights,
             "learning_rate": FLAGS.learning_rate,
             "temperature": FLAGS.policy_temperature,
             "game_batch": FLAGS.num_games,
@@ -204,8 +228,8 @@ def main(argv=None):
         sess.run(init)
 
         # Prepare playout data generator
-        player_weights = opponent_weights = initial_weights
-
+        player_weights = os.path.basename(initial_weights)
+        """
         player_policy = CNNPolicy.load_model(FLAGS.model_json)
         player = GreedyPolicyPlayer(player_policy, move_limit=500)
         player_policy.model.load_weights(player_weights)
@@ -214,9 +238,14 @@ def main(argv=None):
         opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
 
         train_game_generator = game_generator(player, opponent, metadata)
+        """
 
         step = 0
-        for (win_ratio, state_batch, action_batch, reward_batch) in train_game_generator:
+        # for (win_ratio, state_batch, action_batch, reward_batch) in train_game_generator:
+        for step in xrange(FLAGS.max_steps):
+            train_game_generator = create_game_generator(step, player_weights, metadata)
+            (win_ratio, state_batch, action_batch, reward_batch) = train_game_generator.next()
+
             start_time = time.time()
 
             feed_dict = {
@@ -237,20 +266,14 @@ def main(argv=None):
             log_good_probs_mean = tf.reduce_mean(log_good_probs)
             log_good_probs_mean_value = sess.run(log_good_probs_mean, feed_dict)
             """
-            import pdb; pdb.set_trace()
             _, loss_value, acc_value = sess.run([train, loss, acc], feed_dict)
 
             duration = time.time() - start_time
 
-            # Update win_ratio
-            metadata["win_ratio"][player_weights] = (opponent_weights, win_ratio)
-            with open(os.path.join(FLAGS.train_directory, "metadata.json"), "w") as f:
-                json.dump(metadata, f, sort_keys=True, indent=2)
-
             # Save Keras model weights then reload player weights
             player_weights = rl_policy.save_keras_weights(sess, step + 1)
-            player_weights = os.path.join(FLAGS.train_directory, player_weights)
-            player.policy.model.load_weights(player_weights)
+            # player_weights = os.path.join(FLAGS.train_directory, player_weights)
+            # player.policy.model.load_weights(player_weights)
 
             # Write the summaries and print an overview fairly often.
             if step % FLAGS.summarize_every == 0:
