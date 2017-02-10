@@ -46,8 +46,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run GTP')
     parser.add_argument("policy_model", help="Policy network model (json)")
     parser.add_argument("policy_weight", help="Policy network weight (hdf5)")
-    parser.add_argument("value_model", help="Value network model (json)")
-    parser.add_argument("value_weight", help="Value network weight (hdf5)")
+    parser.add_argument("--value-model", type=str, default=None,
+                        help="Value network model (json)")
+    parser.add_argument("--value-weight", type=str, default=None,
+                        help="Value network weight (hdf5)")
     parser.add_argument("--n-playout", type=int, default=10,
                         help="Number of simulation for each play")
     parser.add_argument("--time", "-t", type=str, default='2000 50 180 6',
@@ -61,14 +63,22 @@ if __name__ == "__main__":
     policy_net = CNNPolicy.load_model(args.policy_model)
     policy_net.model.load_weights(args.policy_weight)
 
-    value_net = CNNValue.load_model(args.value_model)
-    value_net.model.load_weights(args.value_weight)
+    f_predict_moves = lambda state: f_policy(policy_net, state)
+    # fast rollout not implemented yet
+    f_predict_moves_fast = f_predict_moves
+
+    if args.value_model:
+        value_net = CNNValue.load_model(args.value_model)
+        value_net.model.load_weights(args.value_weight)
+        f_eval_state = lambda state: f_value(value_net, state)
+    else:
+        f_eval_state = lambda state: .0
 
     m, ms, b, bs = [(int)(t) for t in args.time.split()]
 
-    player = ai.MCTSPlayer(lambda state: f_value(value_net, state),
-                           lambda state: f_policy(policy_net, state),
-                           lambda state: f_rollout(policy_net, state),
+    player = ai.MCTSPlayer(f_eval_state,
+                           f_predict_moves,
+                           f_predict_moves_fast,
                            timer=timer.Canadian(m, ms, b, bs),
                            n_playout=args.n_playout)
 
@@ -89,7 +99,7 @@ if __name__ == "__main__":
             print(engine_reply)
             return engine_reply
 
-        app.run(host="0.0.0.0", debug=True)
+        app.run(host="0.0.0.0", debug=False)
     else:
         from interface.gtp_wrapper import run_gtp
         run_gtp(player)
