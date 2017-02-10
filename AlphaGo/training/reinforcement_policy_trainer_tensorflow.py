@@ -19,13 +19,13 @@ from AlphaGo.util import flatten_idx
 
 
 flags = tf.app.flags
-flags.DEFINE_integer('num_games', 1, 'Game batch size.')
-flags.DEFINE_integer('max_steps', 10, 'Max step size.')
-flags.DEFINE_float('learning_rate', 1e-3, 'Initial learning rate.')
+flags.DEFINE_integer('num_games', 3, 'Number of games in batch.')
+flags.DEFINE_integer('max_steps', 10000, 'Number of batches to run.')
+flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 
-flags.DEFINE_integer('save_every', 2, 'Save policy as a new opponent every n batch.')
-flags.DEFINE_integer('summarize_every', 1, 'Write summary every n batch.')
+flags.DEFINE_integer('save_every', 500, 'Save policy as a new opponent every n batch.')
+flags.DEFINE_integer('summarize_every', 5, 'Write summary every n batch.')
 
 flags.DEFINE_string('model_json', './model/policy.json', 'SL Policy model json')
 flags.DEFINE_string('initial_weights', './model/policy.hdf5', 'SL Policy weights hdf5')
@@ -37,20 +37,7 @@ flags.DEFINE_boolean('verbose', True, '')
 FLAGS = flags.FLAGS
 
 
-def game_generator(player, opponent, metadata):
-    for step in xrange(FLAGS.max_steps):
-        opponent_weights = np.random.choice(metadata["opponents"])
-        opponent_weights = os.path.join(FLAGS.train_directory, opponent_weights)
-        opponent.policy.model.load_weights(opponent_weights)
-        if FLAGS.verbose:
-            print("Batch {}\tsampled opponent is {}".format(step, opponent_weights))
-
-        win_ratio, states, actions, rewards = playout_n(player, opponent, FLAGS.num_games)
-
-        yield (win_ratio, states, actions, rewards)
-
-
-def create_game_generator(step, player_weights, metadata):
+def get_game_batch(step, player_weights, metadata):
     player_policy = CNNPolicy.load_model(FLAGS.model_json)
     player = GreedyPolicyPlayer(player_policy, move_limit=500)
     player_policy.model.load_weights(os.path.join(FLAGS.train_directory, player_weights))
@@ -62,16 +49,20 @@ def create_game_generator(step, player_weights, metadata):
     opponent.policy.model.load_weights(os.path.join(FLAGS.train_directory, opponent_weights))
 
     if FLAGS.verbose:
-        print("[Batch {}]\tplayer: {} opponent: {}".format(step, player_weights, opponent_weights))
+        print("[Batch {:d}] {} (learner) vs {} (opponent)".format(step, player_weights, opponent_weights))
 
     win_ratio, states, actions, rewards = playout_n(player, opponent, FLAGS.num_games)
+
+    if FLAGS.verbose:
+        print("{:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win." \
+              .format(FLAGS.num_games, states.shape[0], actions.shape[0], rewards.shape[0], 100*win_ratio))
 
     # Update win_ratio
     metadata["win_ratio"][player_weights] = (opponent_weights, win_ratio)
     with open(os.path.join(FLAGS.train_directory, "metadata.json"), "w") as f:
         json.dump(metadata, f, sort_keys=True, indent=2)
 
-    yield (win_ratio, states, actions, rewards)
+    return (win_ratio, states, actions, rewards)
 
 
 def _make_training_pair(st, mv, preprocessor):
@@ -202,6 +193,9 @@ def main(argv=None):
                                  shape=(None, rl_policy.BOARD_SIZE**2))
         rewards = tf.placeholder(tf.float32, shape=(None,))
 
+        win_ratio_holder = tf.placeholder(tf.float32, name='winning_percentage')
+        rl_policy.activation_summary(win_ratio_holder)
+
         # Forward
         probs = rl_policy.inference(states, model_weights)
 
@@ -219,7 +213,7 @@ def main(argv=None):
 
         init = tf.global_variables_initializer()
 
-        saver = tf.train.Saver()
+        # saver = tf.train.Saver()
 
         sess = tf.Session()
 
@@ -227,35 +221,26 @@ def main(argv=None):
 
         sess.run(init)
 
-        # Prepare playout data generator
+        # initial player weights
         player_weights = os.path.basename(initial_weights)
-        """
-        player_policy = CNNPolicy.load_model(FLAGS.model_json)
-        player = GreedyPolicyPlayer(player_policy, move_limit=500)
-        player_policy.model.load_weights(player_weights)
-
-        opponent_policy = CNNPolicy.load_model(FLAGS.model_json)
-        opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
-
-        train_game_generator = game_generator(player, opponent, metadata)
-        """
 
         step = 0
-        # for (win_ratio, state_batch, action_batch, reward_batch) in train_game_generator:
         for step in xrange(FLAGS.max_steps):
-            train_game_generator = create_game_generator(step, player_weights, metadata)
-            (win_ratio, state_batch, action_batch, reward_batch) = train_game_generator.next()
+            (win_ratio, state_batch, action_batch, reward_batch) \
+                = get_game_batch(step, player_weights, metadata)
 
             start_time = time.time()
 
             feed_dict = {
                 states: state_batch,
                 actions: action_batch,
-                rewards: reward_batch
+                rewards: reward_batch,
+                win_ratio_holder: win_ratio
             }
 
-            """
             # Debug computation results
+            """
+            import pdb; pdb.set_trace()
             clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
             good_probs = tf.reduce_sum(tf.mul(clip_probs, actions), reduction_indices=[1])
             good_probs_value = sess.run(good_probs, feed_dict)
@@ -263,17 +248,26 @@ def main(argv=None):
             log_good_probs = tf.log(good_probs)
             log_good_probs_value = sess.run(log_good_probs, feed_dict)
 
-            log_good_probs_mean = tf.reduce_mean(log_good_probs)
-            log_good_probs_mean_value = sess.run(log_good_probs_mean, feed_dict)
+            eligibility = tf.mul(log_good_probs, rewards)
+            eligibility_value = sess.run(eligibility, feed_dict)
+
+            loss1 = -tf.reduce_sum(eligibility)
+            loss1_value = sess.run(loss1, feed_dict)
+
+            loss2 = -tf.reduce_mean(eligibility)
+            loss2_value = sess.run(loss2, feed_dict)
             """
+
             _, loss_value, acc_value = sess.run([train, loss, acc], feed_dict)
 
             duration = time.time() - start_time
 
-            # Save Keras model weights then reload player weights
+            # Save Keras model weights
             player_weights = rl_policy.save_keras_weights(sess, step + 1)
-            # player_weights = os.path.join(FLAGS.train_directory, player_weights)
-            # player.policy.model.load_weights(player_weights)
+
+            # Update opponent pool
+            if (step + 1) % FLAGS.save_every == 0:
+                metadata['opponents'].append(player_weights)
 
             # Write the summaries and print an overview fairly often.
             if step % FLAGS.summarize_every == 0:
@@ -285,12 +279,9 @@ def main(argv=None):
                 summary_writer.flush()
 
             # Write checkpoint file
-            if (step + 1) % 1000 == 0 or (step + 1) == FLAGS.max_steps:
-                checkpoint_file = os.path.join(FLAGS.train_directory, 'model.ckpt')
-                saver.save(sess, checkpoint_file, global_step=step)    
-
-            if (step + 1) == FLAGS.max_steps:
-                break
+            # if (step + 1) % 1000 == 0 or (step + 1) == FLAGS.max_steps:
+            #    checkpoint_file = os.path.join(FLAGS.train_directory, 'model.ckpt')
+            #    saver.save(sess, checkpoint_file, global_step=step)    
 
             step += 1
 

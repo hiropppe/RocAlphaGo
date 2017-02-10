@@ -43,7 +43,7 @@ def inference(states_placeholder, initial_weights):
         conv = tf.nn.conv2d(states_placeholder, weights, [1, 1, 1, 1], padding='SAME')
         pre_activation = tf.nn.bias_add(conv, biases)
         conv1 = tf.nn.relu(pre_activation, name=scope.name)
-        _activation_summary(conv1)
+        activation_summary(conv1)
 
     # conv2-12
     convX = conv1
@@ -54,7 +54,7 @@ def inference(states_placeholder, initial_weights):
             conv = tf.nn.conv2d(convX, weights, [1, 1, 1, 1], padding='SAME')
             pre_activation = tf.nn.bias_add(conv, biases)
             conv = tf.nn.relu(pre_activation, name=scope.name)
-            _activation_summary(conv)
+            activation_summary(conv)
         convX = conv
 
     # conv13
@@ -63,19 +63,19 @@ def inference(states_placeholder, initial_weights):
         biases = tf.Variable(get_param(13, 'b'), name='convolution2d_13_b')
         conv = tf.nn.conv2d(convX, weights, [1, 1, 1, 1], padding='SAME')
         conv13 = tf.nn.bias_add(conv, biases)
-        _activation_summary(conv13)
+        activation_summary(conv13)
 
     # linear
     with tf.variable_scope('bias_1') as scope:
         flatten = tf.reshape(conv13, [-1, BOARD_SIZE**2])
         bias = tf.Variable(initial_weights['bias_1']['Variable:0'].value, name='Variable')
         linear = tf.add(flatten, bias, name=scope.name)
-        _activation_summary(linear)
+        activation_summary(linear)
 
     # softmax
     with tf.variable_scope('softmax') as scope:
         probs = tf.nn.softmax(linear)
-        _activation_summary(probs)
+        activation_summary(probs)
 
     return probs
 
@@ -85,11 +85,11 @@ def loss(probs, actions_placeholder, rewards_placeholder):
         clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
         good_probs = tf.reduce_sum(tf.mul(clip_probs, actions_placeholder), reduction_indices=[1])
 
-        loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
-        # eligibility = tf.mul(tf.log(good_probs), rewards_placeholder)
-        # loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
+        # loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
+        eligibility = tf.mul(tf.log(good_probs), rewards_placeholder)
+        loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
 
-        _activation_summary(loss)
+        activation_summary(loss)
     return loss
 
 
@@ -97,29 +97,33 @@ def accuracy(probs, actions_placeholder):
     with tf.variable_scope('accuracy') as scope:
         correct = tf.nn.in_top_k(probs, tf.argmax(actions_placeholder, 1), 1)
         acc = tf.reduce_mean(tf.cast(correct, tf.float32), name=scope.name)
-        _activation_summary(acc)
+        activation_summary(acc)
     return acc
 
 
 def train(loss, learning_rate, rewards_placeholder):
     optimizer = tf.train.AdamOptimizer(learning_rate)
-
+    """
     grads = optimizer.compute_gradients(loss)
     mean_reward = tf.reduce_mean(rewards_placeholder)
     for i, (grad, var) in enumerate(grads):
         if grad is not None:
             grads[i] = (tf.mul(grad, mean_reward), var)
     train_op = optimizer.apply_gradients(grads)
-    # train_op = optimizer.minimize(loss)
+    """
+    train_op = optimizer.minimize(loss)
     return train_op
 
 
 def save_keras_weights(sess, step):
     """
-    Save policy weights
-        convolution2d_X/convolution2d_X_W:0
-        convolution2d_X/convolution2d_X_b:0
-        bias_1/Variable:0
+    Save policy weights (27 trainable_variables below)
+         0. convolution2d_1/convolution2d_1_W:0
+         1. convolution2d_1/convolution2d_1_b:0
+         :
+        24. convolution2d_13/convolution2d_13_W:0
+        25. convolution2d_13/convolution2d_13_b:0
+        26. bias_1/Variable:0
     """
     weights_name = 'weights.{}.hdf5'.format(str(step).rjust(5, '0'))
     with h5.File(os.path.join(FLAGS.train_directory, weights_name), 'w') as root:
@@ -148,12 +152,10 @@ def save_keras_weights(sess, step):
         model_weights.attrs['layer_names'] = np.array(layer_names)
         for layer_name in layer_names:
             model_weights[layer_name].attrs['weight_names'] = np.array(weight_names[layer_name])
-        # import pdb; pdb.set_trace()
-        # print(weights_name)
     return weights_name
 
 
-def _activation_summary(x):
+def activation_summary(x):
     """Helper to create summaries for activations.
     Creates a summary that provides a histogram of activations.
     Creates a summary that measures the sparsity of activations.
