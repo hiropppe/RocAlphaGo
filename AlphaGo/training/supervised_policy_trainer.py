@@ -2,6 +2,7 @@ import numpy as np
 import os
 import h5py as h5
 import json
+import keras
 from keras.optimizers import SGD
 from keras.callbacks import ModelCheckpoint, Callback
 from AlphaGo.models.policy import CNNPolicy
@@ -126,6 +127,14 @@ def run_training(cmd_line_args=None):
                       args.out_directory)
             else:
                 print("starting fresh output directory %s" % args.out_directory)
+
+    # Limit the GPU memory usage
+    if keras.backend.backend() == 'tensorflow':
+        import tensorflow as tf
+        from keras.backend.tensorflow_backend import set_session
+        config = tf.ConfigProto()
+        config.gpu_options.per_process_gpu_memory_fraction = 0.3
+        set_session(tf.Session(config=config))
 
     # load model from json spec
     policy = CNNPolicy.load_model(args.model)
