@@ -23,6 +23,7 @@ flags.DEFINE_integer('num_games', 3, 'Number of games in batch.')
 flags.DEFINE_integer('max_steps', 10000, 'Number of batches to run.')
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
+flags.DEFINE_float('gpu_memory_fraction', 0.25, 'config.per_process_gpu_memory_fraction.')
 
 flags.DEFINE_integer('save_every', 500, 'Save policy as a new opponent every n batch.')
 flags.DEFINE_integer('summarize_every', 5, 'Write summary every n batch.')
@@ -215,7 +216,9 @@ def main(argv=None):
 
         # saver = tf.train.Saver()
 
-        sess = tf.Session()
+        config = tf.ConfigProto()
+        config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
+        sess = tf.Session(config=config)
 
         summary_writer = tf.summary.FileWriter(FLAGS.train_directory, sess.graph)
 
