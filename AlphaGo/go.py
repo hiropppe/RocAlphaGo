@@ -1,6 +1,6 @@
 import numpy as np
 
-from AlphaGo import util
+import util
 
 
 WHITE = -1
@@ -18,7 +18,7 @@ class GameState(object):
     __NEIGHBORS_CACHE = {}
 
     def __init__(self, size=19, komi=7.5, enforce_superko=False):
-        self.board = np.zeros((size, size))
+        self.board = np.zeros((size, size), dtype=np.int)
         self.board.fill(EMPTY)
         self.size = size
         self.current_player = BLACK
