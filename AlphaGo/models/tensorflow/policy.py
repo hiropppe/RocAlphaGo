@@ -3,8 +3,9 @@ import os
 
 import tensorflow as tf
 
+import nn_util
+
 from AlphaGo.preprocessing.preprocessing import Preprocess, DEFAULT_FEATURES
-from AlphaGo.models.tensorflow import nn_util
 from AlphaGo.util import flatten_idx
 
 

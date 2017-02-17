@@ -2,7 +2,7 @@
 
 import numpy
 
-import setuptools
+from setuptools import setup, find_packages
 
 from distutils import core
 from Cython.Build import cythonize
@@ -21,17 +21,15 @@ core.setup(
 requires = [
 ]
 
-
-setuptools.setup(
+setup(
   name='RocAlphaGo',
   version='0.0.1',
   author='take',
   url='',
-  packages=[
-    'AlphaGo', 'AlphaGo.models', 'AlphaGo.preprocessing', 'AlphaGo.training', 'interface'
-  ],
+  packages=find_packages(),
   scripts=[
-    'scripts/rag', 'scripts/ragc'
+    'scripts/rag',
+    'scripts/ragc'
   ],
   install_requires=requires,
   license='MIT',
@@ -47,9 +45,5 @@ setuptools.setup(
     'Topic :: Utilities',
   ],
   data_files=[
-    ('/usr/local/share/rocalphago/', ['model/policy.json']),
-    ('/usr/local/share/rocalphago/', ['model/policy.hdf5']),
-    ('/usr/local/share/rocalphago/', ['model/value.json']),
-    ('/usr/local/share/rocalphago/', ['model/value.hdf5']),
   ]
 )

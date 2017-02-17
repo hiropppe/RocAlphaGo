@@ -1,55 +1,21 @@
 import numpy as np
 
+import os
+import sys
+
 from AlphaGo import ai
 from AlphaGo import timer
 
-from AlphaGo.models.policy import CNNPolicy
-from AlphaGo.models.value import CNNValue
+from AlphaGo.models.tensorflow import policy
 
 from interface.gtp_wrapper import GTPGameConnector, ExtendedGtpEngine
-
-
-def apply_temperature(distribution, beta=0.67):
-    log_probabilities = np.log(distribution)
-    # apply beta exponent to probabilities (in log space)
-    log_probabilities = log_probabilities * beta
-    # scale probabilities to a more numerically stable range (in log space)
-    log_probabilities = log_probabilities - log_probabilities.max()
-    # convert back from log space
-    probabilities = np.exp(log_probabilities)
-    # re-normalize the distribution
-    return probabilities / probabilities.sum()
-
-
-def f_policy(policy, state):
-    legal_moves = state.get_legal_moves(include_eyes=False)
-    if len(legal_moves) > 0:
-        move_probs = policy.eval_state(state, legal_moves)
-        moves, probs = zip(*move_probs)
-        probs = apply_temperature(probs)
-        return zip(moves, probs)
-
-
-def f_value(value, state):
-    return value.eval_state(state)
-
-
-def f_rollout(rollout, state):
-    legal_moves = state.get_legal_moves(include_eyes=False)
-    if len(legal_moves) > 0:
-        move_probs = rollout.eval_state(state, legal_moves)
-        return zip(*move_probs)
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Run GTP')
-    parser.add_argument("policy_model", help="Policy network model (json)")
-    parser.add_argument("policy_weight", help="Policy network weight (hdf5)")
-    parser.add_argument("--value-model", type=str, default=None,
-                        help="Value network model (json)")
-    parser.add_argument("--value-weight", type=str, default=None,
-                        help="Value network weight (hdf5)")
+    parser.add_argument("policy_checkpoint_directory",
+                        help="Policy network checkpoint directory")
     parser.add_argument("--n-playout", type=int, default=10,
                         help="Number of simulation for each play")
     parser.add_argument("--time", "-t", type=str, default='2000 50 180 6',
@@ -60,25 +26,20 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    policy_net = CNNPolicy.load_model(args.policy_model)
-    policy_net.model.load_weights(args.policy_weight)
+    # value net is not implemented yet
+    value_net = None
 
-    f_predict_moves = lambda state: f_policy(policy_net, state)
-    # fast rollout not implemented yet
-    f_predict_moves_fast = f_predict_moves
+    policy_net = policy.CNNPolicy(checkpoint_dir=args.policy_checkpoint_directory)
+    policy_net.load_model()
 
-    if args.value_model:
-        value_net = CNNValue.load_model(args.value_model)
-        value_net.model.load_weights(args.value_weight)
-        f_eval_state = lambda state: f_value(value_net, state)
-    else:
-        f_eval_state = lambda state: .0
+    # fast rollout is not implemented yet
+    fast_policy_net = policy_net
 
     m, ms, b, bs = [(int)(t) for t in args.time.split()]
 
-    player = ai.MCTSPlayer(f_eval_state,
-                           f_predict_moves,
-                           f_predict_moves_fast,
+    player = ai.MCTSPlayer(value_net,
+                           policy_net,
+                           fast_policy_net,
                            timer=timer.Canadian(m, ms, b, bs),
                            n_playout=args.n_playout)
 

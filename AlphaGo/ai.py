@@ -116,10 +116,10 @@ class ProbabilisticPolicyPlayer(object):
 
 class MCTSPlayer(object):
 
-    def __init__(self, value_function, policy_function, rollout_function,
+    def __init__(self, value_net, policy_net, fast_policy_net,
                  timer=timer.Canadian(), lmbda=.5, c_puct=5, rollout_limit=500,
                  n_playout=100):
-        self.mcts = mcts.MCTS(value_function, policy_function, rollout_function, timer,
+        self.mcts = mcts.MCTS(value_net, policy_net, fast_policy_net, timer,
                               lmbda, c_puct, rollout_limit, n_playout)
 
     def set_time(self, m, b, bs):

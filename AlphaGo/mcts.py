@@ -9,9 +9,39 @@ import numpy as np
 import sys
 import traceback
 
-from operator import itemgetter
-
 import AlphaGo.go as go
+
+
+def apply_temperature(distribution, beta=0.67):
+    log_probabilities = np.log(distribution)
+    # apply beta exponent to probabilities (in log space)
+    log_probabilities = log_probabilities * beta
+    # scale probabilities to a more numerically stable range (in log space)
+    log_probabilities = log_probabilities - log_probabilities.max()
+    # convert back from log space
+    probabilities = np.exp(log_probabilities)
+    # re-normalize the distribution
+    return probabilities / probabilities.sum()
+
+
+def eval_policy(policy, state):
+    legal_moves = state.get_legal_moves(include_eyes=False)
+    if len(legal_moves) > 0:
+        move_probs = policy.eval_state(state, legal_moves)
+        moves, probs = zip(*move_probs)
+        probs = apply_temperature(probs)
+        return zip(moves, probs)
+
+
+def eval_value(value, state):
+    return value.eval_state(state)
+
+
+def eval_fast_policy(fast_policy, state):
+    legal_moves = state.get_legal_moves(include_eyes=False)
+    if len(legal_moves) > 0:
+        move_probs = fast_policy.eval_state(state, legal_moves)
+        return zip(*move_probs)
 
 
 class TreeNode(object):
@@ -121,7 +151,7 @@ class MCTS(object):
     fast evaluation from leaf nodes to the end of the game.
     """
 
-    def __init__(self, value_fn, policy_fn, rollout_policy_fn, timer,
+    def __init__(self, value_net, policy_net, fast_policy_net, timer,
                  lmbda=0.5, c_puct=5, rollout_limit=500, n_playout=10000, n_expand_threshold=2):
         """Arguments:
         value_fn -- a function that takes in a state and ouputs a score in [-1, 1], i.e. the
@@ -137,9 +167,9 @@ class MCTS(object):
             should be used only in conjunction with a large value for n_playout.
         """
         self._root = TreeNode(None, 1.0)
-        self._value = value_fn
-        self._policy = policy_fn
-        self._rollout = rollout_policy_fn
+        self._value = lambda state: eval_value(value_net, state)
+        self._policy = lambda state: eval_policy(policy_net, state)
+        self._rollout = lambda state: eval_fast_policy(fast_policy_net, state)
         self._timer = timer
         self._lmbda = lmbda
         self._c_puct = c_puct
