@@ -3,7 +3,7 @@ import os
 
 import tensorflow as tf
 
-import nn_util
+import tf_nn_util
 
 from AlphaGo.preprocessing.preprocessing import Preprocess, DEFAULT_FEATURES
 from AlphaGo.util import flatten_idx
@@ -113,28 +113,28 @@ class CNNPolicy:
         def initial_weight(layer, wb, scope_name):
             if wb.lower() == 'w':
                 if layer == 1:
-                    return nn_util.variable_with_weight_decay(
+                    return tf_nn_util.variable_with_weight_decay(
                                 scope_name + '_W',
                                 [5, 5, self.input_depth, self.filters])
                 elif layer <= 12:
-                    return nn_util.variable_with_weight_decay(
+                    return tf_nn_util.variable_with_weight_decay(
                                 scope_name + '_W',
                                 [3, 3, self.filters, self.filters])
                 elif layer == 13:
-                    return nn_util.variable_with_weight_decay(
+                    return tf_nn_util.variable_with_weight_decay(
                                 scope_name + '_W',
                                 [1, 1, self.filters, 1])
             elif wb.lower() == 'b':
                 if 1 <= layer and layer <= 12:
-                    return nn_util.zero_variable(
+                    return tf_nn_util.zero_variable(
                                 scope_name + '_b',
                                 [self.filters])
                 elif layer == 13:
-                    return nn_util.zero_variable(
+                    return tf_nn_util.zero_variable(
                                 scope_name + '_b',
                                 [1])
                 elif layer == 14:
-                    return nn_util.zero_variable(
+                    return tf_nn_util.zero_variable(
                                 'Variable',
                                 [self.bsize**2])
 
