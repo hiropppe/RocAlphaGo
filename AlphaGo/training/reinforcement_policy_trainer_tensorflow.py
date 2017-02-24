@@ -1,23 +1,21 @@
 #!/usr/bin/env python
 
-import json
+import glob
 import os
 import time
-import h5py as h5
 import numpy as np
 import tensorflow as tf
 
 import AlphaGo.go as go
 
-from AlphaGo.training import rl_policy
-
 from shutil import copyfile
 
-from AlphaGo.ai import GreedyPolicyPlayer
-from AlphaGo.models.policy import CNNPolicy
+from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
 from AlphaGo.util import flatten_idx
+from AlphaGo.models.tf_policy import CNNPolicy
 
 
+# input flags
 flags = tf.app.flags
 flags.DEFINE_integer('num_games', 3, 'Number of games in batch.')
 flags.DEFINE_integer('max_steps', 10000, 'Number of batches to run.')
@@ -28,40 +26,46 @@ flags.DEFINE_float('gpu_memory_fraction', 0.25, 'config.per_process_gpu_memory_f
 flags.DEFINE_integer('save_every', 500, 'Save policy as a new opponent every n batch.')
 flags.DEFINE_integer('summarize_every', 5, 'Write summary every n batch.')
 
-flags.DEFINE_string('model_json', './model/policy.json', 'SL Policy model json')
-flags.DEFINE_string('initial_weights', './model/policy.hdf5', 'SL Policy weights hdf5')
+flags.DEFINE_string('sl_logdir', './SL_logs', 'Directory where to write SL policy train logs')
+flags.DEFINE_string('rl_logdir', './RL_logs', 'Directory where to write RL policy train logs')
+flags.DEFINE_string('opponent_pool', './RL_opponents')
 
-flags.DEFINE_string('train_directory', './logs', 'Directory where to write train logs')
+flags.DEFINE_string("job_name", "", "Either 'ps' or 'worker'")
+flags.DEFINE_integer("task_index", 0, "Index of task within the job")
+flags.DEFINE_integer('checkpoint', 100, 'Interval steps to save checkpoint.')
 
 flags.DEFINE_boolean('resume', False, '')
 flags.DEFINE_boolean('verbose', True, '')
 FLAGS = flags.FLAGS
 
 
-def get_game_batch(step, player_weights, metadata):
-    player_policy = CNNPolicy.load_model(FLAGS.model_json)
-    player = GreedyPolicyPlayer(player_policy, move_limit=500)
-    player_policy.model.load_weights(os.path.join(FLAGS.train_directory, player_weights))
+# cluster specification
+parameter_servers = ["ps0:2222"]
+workers = ["worker0:2222",
+           "worker1:2222"]
 
-    opponent_policy = CNNPolicy.load_model(FLAGS.model_json)
-    opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
+
+def get_game_batch(step, learner_policy):
+    learner = ProbabilisticPolicyPlayer(learner_policy,
+                                        tenperature=FLAGS.policy_temperature,
+                                        move_limit=500)
+
     # sampling opponent from pool
-    opponent_weights = np.random.choice(metadata["opponents"])
-    opponent.policy.model.load_weights(os.path.join(FLAGS.train_directory, opponent_weights))
+    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
+    opponent_policy = CNNPolicy(checkpoint_dir=opponent_policy_logdir)
+    opponent = ProbabilisticPolicyPlayer(opponent_policy,
+                                         tenperature=FLAGS.policy_temperature,
+                                         move_limit=500)
 
     if FLAGS.verbose:
-        print("[Batch {:d}] {} (learner) vs {} (opponent)".format(step, player_weights, opponent_weights))
+        print("[Batch {:d}] opponent is loaded from {}".format(
+            step, opponent_policy_logdir))
 
-    win_ratio, states, actions, rewards = playout_n(player, opponent, FLAGS.num_games)
+    win_ratio, states, actions, rewards = playout_n(learner, opponent, FLAGS.num_games)
 
     if FLAGS.verbose:
-        print("{:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win." \
-              .format(FLAGS.num_games, states.shape[0], actions.shape[0], rewards.shape[0], 100*win_ratio))
-
-    # Update win_ratio
-    metadata["win_ratio"][player_weights] = (opponent_weights, win_ratio)
-    with open(os.path.join(FLAGS.train_directory, "metadata.json"), "w") as f:
-        json.dump(metadata, f, sort_keys=True, indent=2)
+        print("{:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win."
+              .format(FLAGS.num_games, states.shape[0], actions.shape[0], rewards.shape[0], 100 * win_ratio))
 
     return (win_ratio, states, actions, rewards)
 
@@ -132,164 +136,144 @@ def playout_n(learner, opponent, num_games, value=zero_baseline):
 
     wins = sum(state.get_winner() == pc for (state, pc) in zip(states, learner_color))
 
-    state_batch = np.concatenate(state_batch, axis=0)
+    # dim ordering is different to keras input
+    state_batch = np.concatenate(state_batch, axis=0).transpose((0, 2, 3, 1))
     action_batch = np.concatenate(action_batch, axis=0)
     reward_batch = np.concatenate(reward_batch)
 
     return float(wins) / num_games, state_batch, action_batch, reward_batch
 
 
-def main(argv=None):
+def load_learner_policy():
     if not FLAGS.resume:
-        if not os.path.exists(FLAGS.train_directory):
+        if not os.path.exists(FLAGS.rl_logdir):
             if FLAGS.verbose:
-                print("creating output directory {}".format(FLAGS.train_directory))
-            os.makedirs(FLAGS.train_directory)
+                print("creating RL train log directory {}".format(FLAGS.rl_logdir))
+            os.makedirs(FLAGS.rl_logdir)
 
-        ZEROTH_FILE = "weights.00000.hdf5"
+        SL_POLICY_CHECKPOINT_FILES = ['model.ckpt.data-00000-of-00001',
+                                      'model.ckpt.index',
+                                      'model.ckpt.mdata',
+                                      'checkpoint']
 
-        initial_weights = os.path.join(FLAGS.train_directory, ZEROTH_FILE)
-        copyfile(FLAGS.initial_weights, initial_weights)
+        for each_file in SL_POLICY_CHECKPOINT_FILES:
+            sl_ckpt = os.path.join(FLAGS.sl_logdir, each_file)
+            rl_ckpt = os.path.join(FLAGS.rl_logdir, each_file)
+            copyfile(sl_ckpt, rl_ckpt)
+            if FLAGS.verbose:
+                print("copied {} to {}".format(sl_ckpt, rl_ckpt))
 
-        if FLAGS.verbose:
-            print("copied {} to {}".format(FLAGS.initial_weights,
-                                           os.path.join(FLAGS.train_directory, ZEROTH_FILE)))
+    policy = CNNPolicy(checkpoint_dir=FLAGS.checkpoint_dir)
+    policy.load_model()
 
-        metadata = {
-            "model_file": FLAGS.model_json,
-            "init_weights": initial_weights,
-            "learning_rate": FLAGS.learning_rate,
-            "temperature": FLAGS.policy_temperature,
-            "game_batch": FLAGS.num_games,
-            "opponents": [ZEROTH_FILE],
-            "win_ratio": {}  # map from player to tuple of (opponent, win ratio) Useful for
-                             # validating in lieu of 'accuracy/loss'
-        }
-    else:
-        if not os.path.exists(os.path.join(FLAGS.train_directory, "metadata.json")):
-            raise ValueError("Cannot resume without existing output directory")
 
-        with open(os.path.join(FLAGS.train_directory, "metadata.json"), "r") as f:
-            metadata = json.load(f)
+def run_training(policy, cluster, server):
+    # Between-graph replication
+    with tf.device(tf.train.replica_device_setter(
+                   worker_device="/job:worker/task:%d" % FLAGS.task_index,
+                   cluster=cluster)):
 
-        initial_weights = os.path.join(FLAGS.train_directory, FLAGS.initial_weights)
+        # count the number of updates
+        global_step = tf.get_variable('global_step', [], tf.int32,
+                                      initializer=tf.constant_initializer(0),
+                                      trainable=False)
 
-        if not os.path.exists(initial_weights):
-            raise ValueError("Cannot resume; weights {} do not exist".format(initial_weights))
-        elif FLAGS.verbose:
-            print("Resuming with weights {}".format(initial_weights))
+        probs_op = policy.inference()
+        loss_op = policy.loss(probs_op)
+        acc_op = policy.accuracy(loss_op)
 
-    # RL policy training on TF
-    weights = h5.File(initial_weights)
-    model_weights = weights['model_weights']
+        # specify replicas optimizer
+        with tf.name_scope('dist_train'):
+            grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
+            rep_op = tf.train.SyncReplicasOptimizer(grad_op,
+                                                    replicas_to_aggregate=len(workers),
+                                                    replica_id=FLAGS.task_index,
+                                                    total_num_replicas=len(workers),
+                                                    use_locking=True)
 
-    with tf.Graph().as_default():
-        # Define placeholder
-        states = tf.placeholder(tf.float32,
-                                shape=(None,
-                                       rl_policy.BOARD_SIZE,
-                                       rl_policy.BOARD_SIZE,
-                                       rl_policy.NUM_CHANNELS))
-        actions = tf.placeholder(tf.float32,
-                                 shape=(None, rl_policy.BOARD_SIZE**2))
-        rewards = tf.placeholder(tf.float32, shape=(None,))
+            train_op = rep_op.minimize(loss_op, global_step=global_step)
 
-        win_ratio_holder = tf.placeholder(tf.float32, name='winning_percentage')
-        rl_policy.activation_summary(win_ratio_holder)
+        init_token_op = rep_op.get_init_tokens_op()
+        chief_queue_runner = rep_op.get_chief_queue_runner()
 
-        # Forward
-        probs = rl_policy.inference(states, model_weights)
+        # create a summary for our cost and accuracy
+        tf.summary.scalar("loss", loss_op)
+        tf.summary.scalar("accuracy", acc_op)
 
-        # Compute loss
-        loss = rl_policy.loss(probs, actions, rewards)
+        # merge all summaries into a single "operation" which we can execute in a session
+        summary_op = tf.summary.merge_all()
+        init_op = tf.global_variables_initializer()
+        print("Variables initialized ...")
 
-        # Check accuracy for actual actions
-        acc = rl_policy.accuracy(probs, actions)
+    is_chief = FLAGS.task_index == 0
+    sv = tf.train.Supervisor(is_chief=is_chief,
+                             logdir=FLAGS.rl_logdir,
+                             global_step=global_step,
+                             summary_op=None,
+                             saver=tf.train.Saver(),
+                             init_op=init_op)
 
-        # Train
-        train = rl_policy.train(loss, FLAGS.learning_rate, rewards)
+    config = tf.ConfigProto(allow_soft_placement=True)
+    with sv.prepare_or_wait_for_session(server.target, config=config) as sess:
+        if is_chief:
+            sv.start_queue_runners(sess, [chief_queue_runner])
+            sess.run(init_token_op)
 
-        # Build the summary Tensor based on the TF collection of Summaries.
-        summary = tf.summary.merge_all()
-
-        init = tf.global_variables_initializer()
-
-        # saver = tf.train.Saver()
-
-        config = tf.ConfigProto()
-        config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
-        sess = tf.Session(config=config)
-
-        summary_writer = tf.summary.FileWriter(FLAGS.train_directory, sess.graph)
-
-        sess.run(init)
-
-        # initial player weights
-        player_weights = os.path.basename(initial_weights)
-
-        step = 0
-        for step in xrange(FLAGS.max_steps):
-            (win_ratio, state_batch, action_batch, reward_batch) \
-                = get_game_batch(step, player_weights, metadata)
-
+        # perform training cycles
+        reports = 0
+        start_time = time.time()
+        for local_step in xrange(FLAGS.max_steps):
             start_time = time.time()
 
-            feed_dict = {
-                states: state_batch,
-                actions: action_batch,
-                rewards: reward_batch,
-                win_ratio_holder: win_ratio
-            }
+            (win_ratio, states, actions, rewards) = get_game_batch(local_step, policy)
 
-            # Debug computation results
-            """
-            import pdb; pdb.set_trace()
-            clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
-            good_probs = tf.reduce_sum(tf.mul(clip_probs, actions), reduction_indices=[1])
-            good_probs_value = sess.run(good_probs, feed_dict)
+            # perform the operations we defined earlier on batch
+            _, loss, acc, summary, step = sess.run(
+                [train_op, loss_op, acc_op, summary_op, global_step],
+                feed_dict={
+                    policy.statesholder: states,
+                    policy.actionsholder: actions,
+                    policy.rewardsholder: rewards
+                })
 
-            log_good_probs = tf.log(good_probs)
-            log_good_probs_value = sess.run(log_good_probs, feed_dict)
+            elapsed_time = time.time() - start_time
+            print("Step: :d,".format(step),
+                  " Loss: :.4f,".format(loss),
+                  " Accuracy: :.4f,".format(acc),
+                  " Elapsed: :3.2fms".format(float(elapsed_time*1000)))
 
-            eligibility = tf.mul(log_good_probs, rewards)
-            eligibility_value = sess.run(eligibility, feed_dict)
+            if is_chief:
+                if step > FLAGS.checkpoint * reports:
+                    reports += 1
+                    # save summary
+                    sv.summary_computed(sess, summary, global_step=step)
+                    sv.summary_writer.flush()
+                    # save checkpoint
+                    sv.saver.save(sess, sv.save_path, global_step=step)
 
-            loss1 = -tf.reduce_sum(eligibility)
-            loss1_value = sess.run(loss1, feed_dict)
+    if is_chief:
+        sv.request_stop()
+    else:
+        sv.stop()
 
-            loss2 = -tf.reduce_mean(eligibility)
-            loss2_value = sess.run(loss2, feed_dict)
-            """
 
-            _, loss_value, acc_value = sess.run([train, loss, acc], feed_dict)
+def main(argv=None):
+    cluster = tf.train.ClusterSpec({"ps": parameter_servers, "worker": workers})
 
-            duration = time.time() - start_time
+    # start a server for a specific task
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
+    server = tf.train.Server(cluster,
+                             config=config,
+                             job_name=FLAGS.job_name,
+                             task_index=FLAGS.task_index)
 
-            # Save Keras model weights
-            player_weights = rl_policy.save_keras_weights(sess, step + 1)
+    if FLAGS.job_name == 'job_name':
+        server.join()
+    elif FLAGS.jon_name == 'task_index':
+        learner_policy = load_learner_policy()
 
-            # Update opponent pool
-            if (step + 1) % FLAGS.save_every == 0:
-                metadata['opponents'].append(player_weights)
-
-            # Write the summaries and print an overview fairly often.
-            if step % FLAGS.summarize_every == 0:
-                # Print status to stdout.
-                print('Step %d: loss = %.2f acc = %.2f (%.3f sec)' % (step, loss_value, acc_value, duration))
-                # Update the events file.
-                summary_str = sess.run(summary, feed_dict=feed_dict)
-                summary_writer.add_summary(summary_str, step)
-                summary_writer.flush()
-
-            # Write checkpoint file
-            # if (step + 1) % 1000 == 0 or (step + 1) == FLAGS.max_steps:
-            #    checkpoint_file = os.path.join(FLAGS.train_directory, 'model.ckpt')
-            #    saver.save(sess, checkpoint_file, global_step=step)    
-
-            step += 1
-
-    # close h5
-    weights.close()
+        run_training(learner_policy, cluster, server)
 
 
 if __name__ == '__main__':

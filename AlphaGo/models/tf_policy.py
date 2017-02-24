@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import re
 
 import tensorflow as tf
 
@@ -7,6 +8,12 @@ import tf_nn_util
 
 from AlphaGo.preprocessing.preprocessing import Preprocess, DEFAULT_FEATURES
 from AlphaGo.util import flatten_idx
+
+
+# If a model is trained with multiple GPUs, prefix all Op names with tower_name
+# to differentiate the operations. Note that this prefix is removed from the
+# names of the summaries when visualizing a model.
+TOWER_NAME = 'tower'
 
 
 class CNNPolicy:
@@ -18,8 +25,7 @@ class CNNPolicy:
                  feature_list=DEFAULT_FEATURES,
                  bsize=19,
                  filters=192,
-                 checkpoint_dir='./logs',
-                 weight_setter=None):
+                 checkpoint_dir='./logs'):
         """create a neural net object that preprocesses according to feature_list and uses
         a neural network specified by keyword arguments (using subclass' create_network())
 
@@ -35,18 +41,26 @@ class CNNPolicy:
 
         self.checkpoint_dir = checkpoint_dir
 
+    def init_graph(self, weight_setter=None, train=False, learning_rate=1e-03):
         # initialize computation graph
         with tf.Graph().as_default():
             self.statesholder = self._statesholder()
+            self.actionsholder = self._actionsholder()
+            self.rewardsholder = self._rewardsholder()
 
-            self.logits = self.inference(weight_setter)
+            self.probs = self.inference(weight_setter)
+
+            if train:
+                self.accuracy_op = self.accuracy(self.probs)
+                self.loss_op = self.loss(self.probs)
+                self.train_op = self.train(self.loss_op, learning_rate)
 
             self.saver = tf.train.Saver()
 
-            self.sess = tf.Session()
-
-            init_op = tf.global_variables_initializer()
-            self.sess.run(init_op)
+    def start_session(self):
+        self.sess = tf.Session()
+        init_op = tf.global_variables_initializer()
+        self.sess.run(init_op)
 
     def load_model(self):
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_dir)
@@ -95,6 +109,28 @@ class CNNPolicy:
                                                           state_size)
         return results
 
+    def forward(self, states):
+        states = self.reordering_states_tensor(states)
+        return self.sess.run(self.probs,
+                             feed_dict={self.statesholder: states})
+
+    def run_train(self, step, states, actions, rewards):
+        states = self.reordering_states_tensor(states)
+        feed_dict = {
+            self.statesholder: states,
+            self.actionsholder: actions,
+            self.rewardsholder: rewards
+        }
+
+        loss, accuracy, _ = self.sess.run([self.loss_op, self.accuracy_op, self.train_op],
+                                          feed_dict=feed_dict)
+
+        return loss, accuracy
+
+    def reordering_states_tensor(states):
+        # TF dim ordering is different to default keras input implementation
+        return states.transpose((0, 2, 3, 1))
+
     def _statesholder(self):
         return tf.placeholder(tf.float32,
                               shape=(None,
@@ -102,11 +138,12 @@ class CNNPolicy:
                                      self.bsize,
                                      self.input_depth))
 
-    def forward(self, states):
-        # dim ordering is different to keras input
-        states = states.transpose((0, 2, 3, 1))
-        return self.sess.run(self.logits,
-                             feed_dict={self.statesholder: states})
+    def _actionsholder(self):
+        return tf.placeholder(tf.float32,
+                              shape=(None, self.bsize**2))
+
+    def _rewardsholder(self):
+        return tf.placeholder(tf.float32, shape=(None,))
 
     def inference(self, weight_setter=None):
 
@@ -178,6 +215,50 @@ class CNNPolicy:
             logits = tf.nn.softmax(linear)
 
         return logits
+
+    def loss(self, probs):
+        with tf.variable_scope('loss') as scope:
+            clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
+            good_probs = tf.reduce_sum(tf.mul(clip_probs, self.actionsholder), reduction_indices=[1])
+
+            # loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
+            eligibility = tf.mul(tf.log(good_probs), self.rewardsholder)
+            loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
+        return loss
+
+    def accuracy(self, probs):
+        with tf.variable_scope('accuracy') as scope:
+            correct = tf.nn.in_top_k(probs, tf.argmax(self.actionsholder, 1), 1)
+            acc = tf.reduce_mean(tf.cast(correct, tf.float32), name=scope.name)
+        return acc
+
+    def train(self, loss, learning_rate):
+        optimizer = tf.train.AdamOptimizer(learning_rate)
+        """
+        grads = optimizer.compute_gradients(loss)
+        mean_reward = tf.reduce_mean(self.rewardsholder)
+        for i, (grad, var) in enumerate(grads):
+            if grad is not None:
+                grads[i] = (tf.mul(grad, mean_reward), var)
+        train_op = optimizer.apply_gradients(grads)
+        """
+        train_op = optimizer.minimize(loss)
+        return train_op
+
+    def activation_summary(x):
+        """Helper to create summaries for activations.
+        Creates a summary that provides a histogram of activations.
+        Creates a summary that measures the sparsity of activations.
+        Args:
+            x: Tensor
+        Returns:
+            nothing
+        """
+        # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
+        # session. This helps the clarity of presentation on tensorboard.
+        tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
+        tf.summary.histogram(tensor_name + '/activations', x)
+        tf.summary.scalar(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
 
     def _select_moves_and_normalize(self, nn_output, moves, size):
         """helper function to normalize a distribution over the given list of moves
