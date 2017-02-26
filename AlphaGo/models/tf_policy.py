@@ -43,7 +43,8 @@ class CNNPolicy:
 
     def init_graph(self, weight_setter=None, train=False, learning_rate=1e-03):
         # initialize computation graph
-        with tf.Graph().as_default():
+        self.g = tf.Graph()	
+        with self.g.as_default():
             self.statesholder = self._statesholder()
             self.actionsholder = self._actionsholder()
             self.rewardsholder = self._rewardsholder()
@@ -56,11 +57,11 @@ class CNNPolicy:
                 self.train_op = self.train(self.loss_op, learning_rate)
 
             self.saver = tf.train.Saver()
+            self.init_op = tf.global_variables_initializer()
 
     def start_session(self):
-        self.sess = tf.Session()
-        init_op = tf.global_variables_initializer()
-        self.sess.run(init_op)
+        self.sess = tf.Session(graph=self.g)
+        self.sess.run(self.init_op)
 
     def load_model(self):
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_dir)

@@ -1,7 +1,7 @@
 import h5py as h5
 import tensorflow as tf
 
-from AlphaGo.models.tensorflow.policy import CNNPolicy
+from AlphaGo.models.tf_policy import CNNPolicy
 
 
 flags = tf.app.flags
@@ -29,8 +29,9 @@ def main(argv=None):
             else:
                 return tf.Variable(layer[scope_name + '_b:0'].value, name=scope_name + '_b')
 
-    policy = CNNPolicy(checkpoint_dir=FLAGS.output_directory,
-                       weight_setter=keras_weight)
+    policy = CNNPolicy(checkpoint_dir=FLAGS.output_directory)
+    policy.init_graph(weight_setter=keras_weight)
+    policy.start_session()
 
     policy.save_model()
 
