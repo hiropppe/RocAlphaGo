@@ -33,7 +33,7 @@ def main(argv=None):
     policy.init_graph(weight_setter=keras_weight)
     policy.start_session()
 
-    policy.save_model()
+    policy.save_model(global_step=0)
 
 
 if __name__ == '__main__':

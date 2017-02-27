@@ -41,6 +41,10 @@ class CNNPolicy:
 
         self.checkpoint_dir = checkpoint_dir
 
+        self.sess = None
+        self.probs = None
+        self.statesholder = None
+
     def init_graph(self, weight_setter=None, train=False, learning_rate=1e-03):
         # initialize computation graph
         self.g = tf.Graph()	
@@ -49,27 +53,33 @@ class CNNPolicy:
             self.actionsholder = self._actionsholder()
             self.rewardsholder = self._rewardsholder()
 
-            self.probs = self.inference(weight_setter)
+            self.probs = self.inference(self.statesholder, weight_setter)
 
             if train:
-                self.accuracy_op = self.accuracy(self.probs)
-                self.loss_op = self.loss(self.probs)
+                self.accuracy_op = self.accuracy(self.probs, self.actionsholder)
+                self.loss_op = self.loss(self.probs, self.actionsholder, self.rewardsholder)
                 self.train_op = self.train(self.loss_op, learning_rate)
 
             self.saver = tf.train.Saver()
             self.init_op = tf.global_variables_initializer()
 
-    def start_session(self):
-        self.sess = tf.Session(graph=self.g)
+    def start_session(self, config):
+        self.sess = tf.Session(graph=self.g, config=config)
         self.sess.run(self.init_op)
+
+    def close_session(self):
+        self.sess.close()
 
     def load_model(self):
         ckpt = tf.train.get_checkpoint_state(self.checkpoint_dir)
         if ckpt:
             self.saver.restore(self.sess, ckpt.model_checkpoint_path)
 
-    def save_model(self):
-        self.saver.save(self.sess, os.path.join(self.checkpoint_dir, 'model.ckpt'))
+    def save_model(self, global_step=None):
+        if global_step is not None:
+            self.saver.save(self.sess, os.path.join(self.checkpoint_dir, 'model.ckpt'), global_step=global_step)
+        else:
+            self.saver.save(self.sess, os.path.join(self.checkpoint_dir, 'model.ckpt'))
 
     def eval_state(self, state, moves=None):
         """Given a GameState object, returns a list of (action, probability) pairs
@@ -128,7 +138,7 @@ class CNNPolicy:
 
         return loss, accuracy
 
-    def reordering_states_tensor(states):
+    def reordering_states_tensor(self, states):
         # TF dim ordering is different to default keras input implementation
         return states.transpose((0, 2, 3, 1))
 
@@ -146,7 +156,7 @@ class CNNPolicy:
     def _rewardsholder(self):
         return tf.placeholder(tf.float32, shape=(None,))
 
-    def inference(self, weight_setter=None):
+    def inference(self, statesholder, weight_setter=None):
 
         def initial_weight(layer, wb, scope_name):
             if wb.lower() == 'w':
@@ -183,7 +193,7 @@ class CNNPolicy:
         with tf.variable_scope('convolution2d_1') as scope:
             weights = weight_setter(1, 'w', scope.name)
             biases = weight_setter(1, 'b', scope.name)
-            conv = tf.nn.conv2d(self.statesholder, weights, [1, 1, 1, 1], padding='SAME')
+            conv = tf.nn.conv2d(statesholder, weights, [1, 1, 1, 1], padding='SAME')
             bias_add = tf.nn.bias_add(conv, biases)
             conv1 = tf.nn.relu(bias_add, name=scope.name)
 
@@ -217,19 +227,19 @@ class CNNPolicy:
 
         return logits
 
-    def loss(self, probs):
+    def loss(self, probs, actionsholder, rewardsholder):
         with tf.variable_scope('loss') as scope:
             clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
-            good_probs = tf.reduce_sum(tf.mul(clip_probs, self.actionsholder), reduction_indices=[1])
+            good_probs = tf.reduce_sum(tf.mul(clip_probs, actionsholder), reduction_indices=[1])
 
             # loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
-            eligibility = tf.mul(tf.log(good_probs), self.rewardsholder)
+            eligibility = tf.mul(tf.log(good_probs), rewardsholder)
             loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
         return loss
 
-    def accuracy(self, probs):
+    def accuracy(self, probs, actionsholder):
         with tf.variable_scope('accuracy') as scope:
-            correct = tf.nn.in_top_k(probs, tf.argmax(self.actionsholder, 1), 1)
+            correct = tf.nn.in_top_k(probs, tf.argmax(actionsholder, 1), 1)
             acc = tf.reduce_mean(tf.cast(correct, tf.float32), name=scope.name)
         return acc
 
