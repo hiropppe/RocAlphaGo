@@ -2,13 +2,14 @@
 
 import glob
 import os
+import shutil
 import time
 import numpy as np
 import tensorflow as tf
 
 import AlphaGo.go as go
 
-from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
+from AlphaGo.ai import GreedyPolicyPlayer
 from AlphaGo.util import flatten_idx
 from AlphaGo.models.tf_policy import CNNPolicy
 
@@ -21,18 +22,18 @@ flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15, 'config.per_process_gpu_memory_fraction.')
 
-flags.DEFINE_integer('save_every', 500, 'Save policy as a new opponent every n batch.')
-flags.DEFINE_integer('summarize_every', 5, 'Write summary every n batch.')
+flags.DEFINE_integer('checkpoint', 10, 'Interval steps to save checkpoint.')
+flags.DEFINE_integer('save_every', 2, 'Save policy as a new opponent every n batch.')
 
-flags.DEFINE_string('sl_logdir', './sl_logs', 'Directory where to write SL policy train logs')
-flags.DEFINE_string('rl_logdir', './rl_logs', 'Directory where to write RL policy train logs')
-
-flags.DEFINE_string('opponent_pool', './rl_opponents', '')
-flags.DEFINE_float('opponent_gpu_memory_fraction', 0.05, 'config.per_process_gpu_memory_fraction.')
+flags.DEFINE_string('logdir', '/tmp/logs',
+                    'Shared directory where to write RL policy train logs')
+flags.DEFINE_string('opponent_pool', '/tmp/opponents',
+                    'Shared directory where to save trained policy weights for opponent')
+flags.DEFINE_float('opponent_gpu_memory_fraction', 0.05,
+                   'config.per_process_gpu_memory_fraction.')
 
 flags.DEFINE_string("job_name", "", "Either 'ps' or 'worker'")
 flags.DEFINE_integer("task_index", 0, "Index of task within the job")
-flags.DEFINE_integer('checkpoint', 100, 'Interval steps to save checkpoint.')
 
 flags.DEFINE_boolean('resume', False, '')
 flags.DEFINE_boolean('verbose', True, '')
@@ -49,14 +50,14 @@ workers = ["worker0:2222",
            "worker1:2222"]
 
 
-def get_game_batch(step, learner_policy):
+def get_game_batch(learner_policy):
     learner = GreedyPolicyPlayer(learner_policy, move_limit=500)
-    # learner = ProbabilisticPolicyPlayer(learner_policy,
-    #                                     temperature=FLAGS.policy_temperature,
-    #                                     move_limit=500)
 
     # sampling opponent from pool
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
+    if FLAGS.verbose:
+        print("Opponent is loaded from {}".format(opponent_policy_logdir))
+
     opponent_policy = CNNPolicy(checkpoint_dir=opponent_policy_logdir)
     opponent_policy.init_graph(train=False)
     config = tf.ConfigProto()
@@ -64,13 +65,6 @@ def get_game_batch(step, learner_policy):
     opponent_policy.start_session(config)
     opponent_policy.load_model()
     opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
-    # opponent = ProbabilisticPolicyPlayer(opponent_policy,
-    #                                      temperature=FLAGS.policy_temperature,
-    #                                      move_limit=500)
-
-    if FLAGS.verbose:
-        print("[Batch {:d}] opponent is loaded from {}".format(
-            step, opponent_policy_logdir))
 
     win_ratio, states, actions, rewards = playout_n(learner, opponent, FLAGS.num_games)
 
@@ -219,7 +213,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server):
 
     is_chief = FLAGS.task_index == 0
     sv = tf.train.Supervisor(is_chief=is_chief,
-                             logdir=FLAGS.rl_logdir,
+                             logdir=FLAGS.logdir,
                              global_step=global_step,
                              summary_op=None,
                              saver=tf.train.Saver(),
@@ -285,14 +279,13 @@ def run_training(policy, cluster, server):
 
     is_chief = FLAGS.task_index == 0
     sv = tf.train.Supervisor(is_chief=is_chief,
-                             logdir=FLAGS.rl_logdir,
+                             logdir=FLAGS.logdir,
                              global_step=global_step,
                              summary_op=None,
-                             saver=tf.train.Saver(),
+                             saver=tf.train.Saver(max_to_keep=0),
                              init_op=init_op)
 
     config = tf.ConfigProto(allow_soft_placement=True)
-    # with sv.prepare_or_wait_for_session(server.target, config=config) as sess:
     with sv.managed_session(server.target, config=config) as sess:
         policy.sess = sess
         policy.probs = probs_op
@@ -305,11 +298,10 @@ def run_training(policy, cluster, server):
         # perform training cycles
         step = 0
         reports = 0
-        # for local_step in xrange(FLAGS.max_steps):
         while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
 
-            (win_ratio, states, actions, rewards) = get_game_batch(step, policy)
+            (win_ratio, states, actions, rewards) = get_game_batch(policy)
 
             # perform the operations we defined earlier on batch
             _, loss, acc, summary, step = sess.run(
@@ -321,19 +313,32 @@ def run_training(policy, cluster, server):
                 })
 
             elapsed_time = time.time() - start_time
-            print("Step: {:d},".format(step),
-                  " Loss: {:.4f},".format(loss),
-                  " Accuracy: {:.4f},".format(acc),
+            print("[Step {:d}]".format(step) +
+                  " Loss: {:.4f},".format(loss) +
+                  " Accuracy: {:.4f},".format(acc) +
                   " Elapsed: {:3.2f}ms".format(float(elapsed_time*1000)))
 
             if is_chief:
-                if step > FLAGS.checkpoint * reports:
+                if step >= FLAGS.checkpoint * (reports+1):
+                    print("Save summary and checkpoint at step {:d}.").format(step)
                     reports += 1
                     # save summary
                     sv.summary_computed(sess, summary, global_step=step)
                     sv.summary_writer.flush()
                     # save checkpoint
                     sv.saver.save(sess, sv.save_path, global_step=step)
+                    # copy latest checkpoint into opponent pool
+                    if reports % FLAGS.save_every == 0:
+                        new_opponent_index = max(int(d)
+                                                 for d
+                                                 in os.listdir(FLAGS.opponent_pool)
+                                                 if d.isdigit()) + 1
+                        new_opponent_path = os.path.join(FLAGS.opponent_pool, str(new_opponent_index))
+                        print("Add new opponent({:d}) into pool at step {:d}").format(new_opponent_index, step)
+                        os.mkdir(new_opponent_path)
+                        for src in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*')):
+                            shutil.copy2(src, new_opponent_path)
+                        shutil.copy2(os.path.join(FLAGS.logdir, 'checkpoint'), new_opponent_path)
 
     if is_chief:
         sv.request_stop()
@@ -352,7 +357,7 @@ def main(argv=None):
                              job_name=FLAGS.job_name,
                              task_index=FLAGS.task_index)
 
-    learner_policy = CNNPolicy(checkpoint_dir=FLAGS.rl_logdir)
+    learner_policy = CNNPolicy(checkpoint_dir=FLAGS.logdir)
     if FLAGS.job_name == 'ps':
         server.join()
     elif FLAGS.job_name == 'worker':
