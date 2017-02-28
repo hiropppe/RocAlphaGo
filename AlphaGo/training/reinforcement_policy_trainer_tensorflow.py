@@ -8,25 +8,27 @@ import tensorflow as tf
 
 import AlphaGo.go as go
 
-from AlphaGo.ai import ProbabilisticPolicyPlayer
+from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
 from AlphaGo.util import flatten_idx
 from AlphaGo.models.tf_policy import CNNPolicy
 
 
 # input flags
 flags = tf.app.flags
-flags.DEFINE_integer('num_games', 3, 'Number of games in batch.')
+flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
 flags.DEFINE_integer('max_steps', 10000, 'Number of batches to run.')
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
-flags.DEFINE_float('gpu_memory_fraction', 0.10, 'config.per_process_gpu_memory_fraction.')
+flags.DEFINE_float('gpu_memory_fraction', 0.15, 'config.per_process_gpu_memory_fraction.')
 
 flags.DEFINE_integer('save_every', 500, 'Save policy as a new opponent every n batch.')
 flags.DEFINE_integer('summarize_every', 5, 'Write summary every n batch.')
 
 flags.DEFINE_string('sl_logdir', './sl_logs', 'Directory where to write SL policy train logs')
 flags.DEFINE_string('rl_logdir', './rl_logs', 'Directory where to write RL policy train logs')
+
 flags.DEFINE_string('opponent_pool', './rl_opponents', '')
+flags.DEFINE_float('opponent_gpu_memory_fraction', 0.05, 'config.per_process_gpu_memory_fraction.')
 
 flags.DEFINE_string("job_name", "", "Either 'ps' or 'worker'")
 flags.DEFINE_integer("task_index", 0, "Index of task within the job")
@@ -36,6 +38,7 @@ flags.DEFINE_boolean('resume', False, '')
 flags.DEFINE_boolean('verbose', True, '')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
+flags.DEFINE_boolean('sync', False, '')
 
 FLAGS = flags.FLAGS
 
@@ -47,21 +50,23 @@ workers = ["worker0:2222",
 
 
 def get_game_batch(step, learner_policy):
-    learner = ProbabilisticPolicyPlayer(learner_policy,
-                                        temperature=FLAGS.policy_temperature,
-                                        move_limit=500)
+    learner = GreedyPolicyPlayer(learner_policy, move_limit=500)
+    # learner = ProbabilisticPolicyPlayer(learner_policy,
+    #                                     temperature=FLAGS.policy_temperature,
+    #                                     move_limit=500)
 
     # sampling opponent from pool
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
     opponent_policy = CNNPolicy(checkpoint_dir=opponent_policy_logdir)
     opponent_policy.init_graph(train=False)
     config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
+    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.opponent_gpu_memory_fraction
     opponent_policy.start_session(config)
     opponent_policy.load_model()
-    opponent = ProbabilisticPolicyPlayer(opponent_policy,
-                                         temperature=FLAGS.policy_temperature,
-                                         move_limit=500)
+    opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
+    # opponent = ProbabilisticPolicyPlayer(opponent_policy,
+    #                                      temperature=FLAGS.policy_temperature,
+    #                                      move_limit=500)
 
     if FLAGS.verbose:
         print("[Batch {:d}] opponent is loaded from {}".format(
@@ -255,16 +260,19 @@ def run_training(policy, cluster, server):
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
-            rep_op = tf.train.SyncReplicasOptimizer(grad_op,
-                                                    replicas_to_aggregate=len(workers),
-                                                    replica_id=FLAGS.task_index,
-                                                    total_num_replicas=len(workers),
-                                                    use_locking=True)
+            if FLAGS.sync:
+                rep_op = tf.train.SyncReplicasOptimizer(grad_op,
+                                                        replicas_to_aggregate=len(workers),
+                                                        replica_id=FLAGS.task_index,
+                                                        total_num_replicas=len(workers),
+                                                        use_locking=True)
+                train_op = rep_op.minimize(loss_op, global_step=global_step)
+            else:
+                train_op = grad_op.minimize(loss_op, global_step=global_step)
 
-            train_op = rep_op.minimize(loss_op, global_step=global_step)
-
-        init_token_op = rep_op.get_init_tokens_op()
-        chief_queue_runner = rep_op.get_chief_queue_runner()
+        if FLAGS.sync:
+            init_token_op = rep_op.get_init_tokens_op()
+            chief_queue_runner = rep_op.get_chief_queue_runner()
 
         # create a summary for our cost and accuracy
         tf.summary.scalar("loss", loss_op)
@@ -284,22 +292,24 @@ def run_training(policy, cluster, server):
                              init_op=init_op)
 
     config = tf.ConfigProto(allow_soft_placement=True)
-    with sv.prepare_or_wait_for_session(server.target, config=config) as sess:
+    # with sv.prepare_or_wait_for_session(server.target, config=config) as sess:
+    with sv.managed_session(server.target, config=config) as sess:
         policy.sess = sess
         policy.probs = probs_op
         policy.statesholder = statesholder
 
-        if is_chief:
+        if FLAGS.sync and is_chief:
             sv.start_queue_runners(sess, [chief_queue_runner])
             sess.run(init_token_op)
 
         # perform training cycles
+        step = 0
         reports = 0
-        start_time = time.time()
-        for local_step in xrange(FLAGS.max_steps):
+        # for local_step in xrange(FLAGS.max_steps):
+        while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
 
-            (win_ratio, states, actions, rewards) = get_game_batch(local_step, policy)
+            (win_ratio, states, actions, rewards) = get_game_batch(step, policy)
 
             # perform the operations we defined earlier on batch
             _, loss, acc, summary, step = sess.run(
@@ -311,10 +321,10 @@ def run_training(policy, cluster, server):
                 })
 
             elapsed_time = time.time() - start_time
-            print("Step: :d,".format(step),
-                  " Loss: :.4f,".format(loss),
-                  " Accuracy: :.4f,".format(acc),
-                  " Elapsed: :3.2fms".format(float(elapsed_time*1000)))
+            print("Step: {:d},".format(step),
+                  " Loss: {:.4f},".format(loss),
+                  " Accuracy: {:.4f},".format(acc),
+                  " Elapsed: {:3.2f}ms".format(float(elapsed_time*1000)))
 
             if is_chief:
                 if step > FLAGS.checkpoint * reports:
