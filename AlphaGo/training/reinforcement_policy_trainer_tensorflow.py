@@ -22,8 +22,8 @@ flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15, 'config.per_process_gpu_memory_fraction.')
 
-flags.DEFINE_integer('checkpoint', 10, 'Interval steps to save checkpoint.')
-flags.DEFINE_integer('save_every', 2, 'Save policy as a new opponent every n batch.')
+flags.DEFINE_integer('checkpoint', 100, 'Interval steps to save checkpoint.')
+flags.DEFINE_integer('save_every', 5, 'Save policy as a new opponent every n batch.')
 
 flags.DEFINE_string('logdir', '/tmp/logs',
                     'Shared directory where to write RL policy train logs')
@@ -254,15 +254,30 @@ def run_training(policy, cluster, server):
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
+
             if FLAGS.sync:
                 rep_op = tf.train.SyncReplicasOptimizer(grad_op,
                                                         replicas_to_aggregate=len(workers),
                                                         replica_id=FLAGS.task_index,
                                                         total_num_replicas=len(workers),
                                                         use_locking=True)
-                train_op = rep_op.minimize(loss_op, global_step=global_step)
+                grads = rep_op.compute_gradients(loss_op)
+                mean_reward = tf.reduce_mean(rewardsholder)
+                for i, (grad, var) in enumerate(grads):
+                    if grad is not None:
+                        grads[i] = (tf.mul(grad, mean_reward), var)
+                train_op = rep_op.apply_gradients(grads, global_step=global_step)
+
+                # train_op = rep_op.minimize(loss_op, global_step=global_step)
             else:
-                train_op = grad_op.minimize(loss_op, global_step=global_step)
+                grads = grad_op.compute_gradients(loss_op)
+                mean_reward = tf.reduce_mean(rewardsholder)
+                for i, (grad, var) in enumerate(grads):
+                    if grad is not None:
+                        grads[i] = (tf.mul(grad, mean_reward), var)
+                train_op = grad_op.apply_gradients(grads, global_step=global_step)
+
+                # train_op = grad_op.minimize(loss_op, global_step=global_step)
 
         if FLAGS.sync:
             init_token_op = rep_op.get_init_tokens_op()

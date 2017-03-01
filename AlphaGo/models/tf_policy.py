@@ -232,9 +232,9 @@ class CNNPolicy:
             clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
             good_probs = tf.reduce_sum(tf.mul(clip_probs, actionsholder), reduction_indices=[1])
 
-            # loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
-            eligibility = tf.mul(tf.log(good_probs), rewardsholder)
-            loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
+            loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
+            # eligibility = tf.mul(tf.log(good_probs), rewardsholder)
+            # loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
         return loss
 
     def accuracy(self, probs, actionsholder):
@@ -245,14 +245,6 @@ class CNNPolicy:
 
     def train(self, loss, learning_rate):
         optimizer = tf.train.AdamOptimizer(learning_rate)
-        """
-        grads = optimizer.compute_gradients(loss)
-        mean_reward = tf.reduce_mean(self.rewardsholder)
-        for i, (grad, var) in enumerate(grads):
-            if grad is not None:
-                grads[i] = (tf.mul(grad, mean_reward), var)
-        train_op = optimizer.apply_gradients(grads)
-        """
         train_op = optimizer.minimize(loss)
         return train_op
 
