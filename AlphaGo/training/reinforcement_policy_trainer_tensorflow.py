@@ -261,23 +261,25 @@ def run_training(policy, cluster, server):
                                                         replica_id=FLAGS.task_index,
                                                         total_num_replicas=len(workers),
                                                         use_locking=True)
+                """
                 grads = rep_op.compute_gradients(loss_op)
                 mean_reward = tf.reduce_mean(rewardsholder)
                 for i, (grad, var) in enumerate(grads):
                     if grad is not None:
                         grads[i] = (tf.mul(grad, mean_reward), var)
                 train_op = rep_op.apply_gradients(grads, global_step=global_step)
-
-                # train_op = rep_op.minimize(loss_op, global_step=global_step)
+                """
+                train_op = rep_op.minimize(loss_op, global_step=global_step)
             else:
+                """
                 grads = grad_op.compute_gradients(loss_op)
                 mean_reward = tf.reduce_mean(rewardsholder)
                 for i, (grad, var) in enumerate(grads):
                     if grad is not None:
                         grads[i] = (tf.mul(grad, mean_reward), var)
                 train_op = grad_op.apply_gradients(grads, global_step=global_step)
-
-                # train_op = grad_op.minimize(loss_op, global_step=global_step)
+                """
+                train_op = grad_op.minimize(loss_op, global_step=global_step)
 
         if FLAGS.sync:
             init_token_op = rep_op.get_init_tokens_op()
@@ -286,6 +288,7 @@ def run_training(policy, cluster, server):
         # create a summary for our cost and accuracy
         tf.summary.scalar("loss", loss_op)
         tf.summary.scalar("accuracy", acc_op)
+        # tf.summary.scalar("mean_reward", mean_reward)
 
         # merge all summaries into a single "operation" which we can execute in a session
         summary_op = tf.summary.merge_all()
