@@ -2,6 +2,7 @@
 
 import glob
 import os
+import re
 import shutil
 import time
 import numpy as np
@@ -9,7 +10,7 @@ import tensorflow as tf
 
 import AlphaGo.go as go
 
-from AlphaGo.ai import GreedyPolicyPlayer
+from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
 from AlphaGo.util import flatten_idx
 from AlphaGo.models.tf_policy import CNNPolicy
 
@@ -51,7 +52,8 @@ workers = ["worker0:2222",
 
 
 def get_game_batch(learner_policy):
-    learner = GreedyPolicyPlayer(learner_policy, move_limit=500)
+    # learner = GreedyPolicyPlayer(learner_policy, move_limit=500)
+    learner = ProbabilisticPolicyPlayer(learner_policy, FLAGS.policy_temperature, move_limit=500)
 
     # sampling opponent from pool
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
@@ -64,7 +66,8 @@ def get_game_batch(learner_policy):
     config.gpu_options.per_process_gpu_memory_fraction = FLAGS.opponent_gpu_memory_fraction
     opponent_policy.start_session(config)
     opponent_policy.load_model()
-    opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
+    # opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
+    opponent = ProbabilisticPolicyPlayer(opponent_policy, FLAGS.policy_temperature, move_limit=500)
 
     win_ratio, states, actions, rewards = playout_n(learner, opponent, FLAGS.num_games)
 
@@ -315,7 +318,8 @@ def run_training(policy, cluster, server):
 
         # perform training cycles
         step = 0
-        reports = 0
+        reports = opponents = 0
+        last_opponent_step = 0
         while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
 
@@ -337,26 +341,39 @@ def run_training(policy, cluster, server):
                   " Elapsed: {:3.2f}ms".format(float(elapsed_time*1000)))
 
             if is_chief:
+                # save checkpoint
+                print("Save checkpoint at step {:d}.").format(step)
+                sv.saver.save(sess, sv.save_path, global_step=step)
+
                 if step >= FLAGS.checkpoint * (reports+1):
-                    print("Save summary and checkpoint at step {:d}.").format(step)
-                    reports += 1
                     # save summary
+                    print("Save summary at step {:d}.").format(step)
+                    reports += 1
                     sv.summary_computed(sess, summary, global_step=step)
                     sv.summary_writer.flush()
-                    # save checkpoint
-                    sv.saver.save(sess, sv.save_path, global_step=step)
-                    # copy latest checkpoint into opponent pool
-                    if reports % FLAGS.save_every == 0:
-                        new_opponent_index = max(int(d)
-                                                 for d
-                                                 in os.listdir(FLAGS.opponent_pool)
-                                                 if d.isdigit()) + 1
-                        new_opponent_path = os.path.join(FLAGS.opponent_pool, str(new_opponent_index))
-                        print("Add new opponent({:d}) into pool at step {:d}").format(new_opponent_index, step)
-                        os.mkdir(new_opponent_path)
-                        for src in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*')):
-                            shutil.copy2(src, new_opponent_path)
-                        shutil.copy2(os.path.join(FLAGS.logdir, 'checkpoint'), new_opponent_path)
+
+                # update opponent pool
+                if step >= FLAGS.save_every * (opponents+1):
+                    opponents += 1
+                    opponent_meta = os.path.basename(glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*.meta'))[-1])
+                    opponent_step = int(re.findall(r'model\.ckpt\-(\d+)\.meta', opponent_meta)[0])
+                    print("Add new opponent into pool at step {:d}".format(opponent_step))
+                    # remove unused checkpoints manualy
+                    for unused_step in range(last_opponent_step+1, opponent_step):
+                        if os.path.exists(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.meta'.format(unused_step))):
+                            if FLAGS.verbose:
+                                print('Deleting checkpoint at step {:d}.'.format(unused_step))
+                            os.remove(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.meta'.format(unused_step)))
+                            os.remove(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.index'.format(unused_step)))
+                            os.remove(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.data-00000-of-00001'.format(unused_step)))
+                    # copy checkpoint files into pool
+                    new_opponent_path = os.path.join(FLAGS.opponent_pool, str(opponent_step))
+                    os.mkdir(new_opponent_path)
+                    for src in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
+                        shutil.copy2(src, new_opponent_path)
+                    shutil.copy2(os.path.join(FLAGS.logdir, 'checkpoint'), new_opponent_path)
+
+                    last_opponent_step = opponent_step
 
     if is_chief:
         sv.request_stop()
