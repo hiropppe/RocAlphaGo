@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 
+import concurrent.futures
 import glob
+import numpy as np
 import os
 import re
+import sys
 import shutil
 import time
-import numpy as np
+import traceback
 import tensorflow as tf
 
 import AlphaGo.go as go
@@ -17,11 +20,11 @@ from AlphaGo.models.tf_policy import CNNPolicy
 
 # input flags
 flags = tf.app.flags
-flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
+flags.DEFINE_integer('num_games', 2, 'Number of games in batch.')
 flags.DEFINE_integer('max_steps', 10000, 'Number of batches to run.')
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
-flags.DEFINE_float('gpu_memory_fraction', 0.15, 'config.per_process_gpu_memory_fraction.')
+flags.DEFINE_float('gpu_memory_fraction', 0.20, 'config.per_process_gpu_memory_fraction.')
 
 flags.DEFINE_integer('checkpoint', 100, 'Interval steps to save checkpoint.')
 flags.DEFINE_integer('save_every', 5, 'Save policy as a new opponent every n batch.')
@@ -30,7 +33,7 @@ flags.DEFINE_string('logdir', '/tmp/logs',
                     'Shared directory where to write RL policy train logs')
 flags.DEFINE_string('opponent_pool', '/tmp/opponents',
                     'Shared directory where to save trained policy weights for opponent')
-flags.DEFINE_float('opponent_gpu_memory_fraction', 0.05,
+flags.DEFINE_float('playout_gpu_memory_fraction', 0.01,
                    'config.per_process_gpu_memory_fraction.')
 
 flags.DEFINE_string("job_name", "", "Either 'ps' or 'worker'")
@@ -41,6 +44,7 @@ flags.DEFINE_boolean('verbose', True, '')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
 flags.DEFINE_boolean('sync', False, '')
+flags.DEFINE_integer('num_playout_cpu', 2, 'Number of cpu for playout.')
 
 FLAGS = flags.FLAGS
 
@@ -49,6 +53,150 @@ FLAGS = flags.FLAGS
 parameter_servers = ["ps0:2222"]
 workers = ["worker0:2222",
            "worker1:2222"]
+
+
+def zero_baseline(state):
+    return 0
+
+
+def load_player(logdir):
+    policy = CNNPolicy(checkpoint_dir=logdir)
+    policy.init_graph(train=False)
+    config = tf.ConfigProto(device_count={"GPU": 0})
+    # config = tf.ConfigProto()
+    # config.gpu_options.per_process_gpu_memory_fraction = FLAGS.playout_gpu_memory_fraction
+    policy.start_session(config)
+    policy.load_model()
+    player = ProbabilisticPolicyPlayer(policy, FLAGS.policy_temperature, move_limit=500)
+    return player
+
+
+def playout(step, num_games, value=zero_baseline):
+    learner = load_player(FLAGS.logdir)
+
+    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
+    if FLAGS.verbose:
+        print("Opponent is loaded from {}".format(opponent_policy_logdir))
+    opponent = load_player(opponent_policy_logdir)
+
+    board_size = learner.policy.bsize
+    states = [go.GameState(size=board_size) for _ in range(num_games)]
+
+    state_batch, action_batch, reward_batch = [], [], []
+
+    game_states = [[] for _ in range(num_games)]
+    game_actions = [[] for _ in range(num_games)]
+
+    learner_won = [None] * num_games
+
+    learner_color = [go.BLACK if i % 2 == 0 else go.WHITE for i in range(num_games)]
+    odd_states = states[1::2]
+    moves = opponent.get_moves(odd_states)
+    for st, mv in zip(odd_states, moves):
+        st.do_move(mv)
+
+    current = learner
+    other = opponent
+    idxs_to_unfinished_states = {i: states[i] for i in range(num_games)}
+
+    while len(idxs_to_unfinished_states) > 0:
+        moves = current.get_moves(idxs_to_unfinished_states.values())
+        just_finished = []
+
+        for (idx, state), mv in zip(idxs_to_unfinished_states.iteritems(), moves):
+            is_learnable = current is learner and mv is not go.PASS_MOVE
+            if is_learnable:
+                (st_tensor, mv_tensor) = _make_training_pair(state, mv, learner.policy.preprocessor)
+                game_states[idx].append(st_tensor)
+                game_actions[idx].append(mv_tensor)
+
+            state.do_move(mv)
+
+            if state.is_end_of_game:
+                learner_won[idx] = state.get_winner() == learner_color[idx]
+                just_finished.append(idx)
+
+                state_batch.append(np.concatenate(game_states[idx], axis=0))
+                action_batch.append(np.concatenate(game_actions[idx], axis=0))
+                z = 1 if learner_won[idx] else -1
+                reward_batch.append(np.array([z - value(state) for state in game_states[idx]]))
+
+        for idx in just_finished:
+            del idxs_to_unfinished_states[idx]
+
+        current, other = other, current
+
+    wins = sum(state.get_winner() == pc for (state, pc) in zip(states, learner_color))
+
+    # dim ordering is different to keras input
+    state_batch = np.concatenate(state_batch, axis=0)
+    action_batch = np.concatenate(action_batch, axis=0)
+    reward_batch = np.concatenate(reward_batch)
+
+    learner.policy.close_session()
+    opponent.policy.close_session()
+
+    return float(wins) / num_games, state_batch, action_batch, reward_batch
+
+
+def get_game_batch_in_parallel(step):
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=FLAGS.num_playout_cpu)
+    num_game_per_cpu = FLAGS.num_games/FLAGS.num_playout_cpu
+    futures = []
+    start_time = time.time()
+    for worker_idx in range(FLAGS.num_playout_cpu):
+        try:
+            future = executor.submit(playout, step, num_game_per_cpu)
+            futures.append(future)
+        except:
+            err, msg, _ = sys.exc_info()
+            sys.stderr.write("{} {}\n".format(err, msg))
+            sys.stderr.write(traceback.format_exc())
+
+    win_ratio_list, states_list, actions_list, rewards_list = [], [], [], []
+    for i, future in enumerate(futures):
+        try:
+            (win_ratio, states, actions, rewards) = future.result()
+            if FLAGS.verbose:
+                print("[Process {:d}] {:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win."
+                      .format(i,
+                              num_game_per_cpu,
+                              states.shape[0],
+                              actions.shape[0],
+                              rewards.shape[0],
+                              100 * win_ratio))
+            win_ratio_list.append(win_ratio)
+            states_list.append(states)
+            actions_list.append(actions)
+            rewards_list.append(rewards)
+        except concurrent.futures.TimeoutError:
+            sys.stderr.write('Playout timed out.\n')
+        except:
+            err, msg, _ = sys.exc_info()
+            sys.stderr.write("{} {}\n".format(err, msg))
+            sys.stderr.write(traceback.format_exc())
+
+    win_ratio = np.mean(win_ratio_list)
+    states = np.concatenate(states_list, axis=0)
+    actions = np.concatenate(actions_list, axis=0)
+    rewards = np.concatenate(rewards_list)
+    elapsed_sec = time.time() - start_time
+    if FLAGS.verbose:
+        print("[Total] {:d} games.".format(FLAGS.num_games) +
+              " {:d} states.".format(states.shape[0]) +
+              " {:d} moves.".format(actions.shape[0]) +
+              " {:d} rewards.".format(rewards.shape[0]) +
+              " {:.2f}% win.".format(100*win_ratio) +
+              " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
+
+    try:
+        sys.stderr.write('Shutting down executor...\n')
+        executor.shutdown()
+        sys.stderr.write('Executor shutdown.\n')
+    except:
+        executor.shutdown(wair=False)
+
+    return win_ratio, states, actions, rewards
 
 
 def get_game_batch(learner_policy):
@@ -63,7 +211,7 @@ def get_game_batch(learner_policy):
     opponent_policy = CNNPolicy(checkpoint_dir=opponent_policy_logdir)
     opponent_policy.init_graph(train=False)
     config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.opponent_gpu_memory_fraction
+    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.playout_gpu_memory_fraction
     opponent_policy.start_session(config)
     opponent_policy.load_model()
     # opponent = GreedyPolicyPlayer(opponent_policy, move_limit=500)
@@ -90,10 +238,6 @@ def _make_training_pair(st, mv, preprocessor):
     mv_tensor = np.zeros((1, st.size * st.size))
     mv_tensor[(0, flatten_idx(mv, st.size))] = 1
     return (st_tensor, mv_tensor)
-
-
-def zero_baseline(state):
-    return 0
 
 
 def playout_n(learner, opponent, num_games, value=zero_baseline):
@@ -323,7 +467,8 @@ def run_training(policy, cluster, server):
         while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
 
-            (win_ratio, states, actions, rewards) = get_game_batch(policy)
+            # (win_ratio, states, actions, rewards) = get_game_batch(policy)
+            (win_ratio, states, actions, rewards) = get_game_batch_in_parallel(step)
 
             # perform the operations we defined earlier on batch
             _, loss, acc, summary, step = sess.run(
