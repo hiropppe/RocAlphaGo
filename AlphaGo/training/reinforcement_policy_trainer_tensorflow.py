@@ -355,8 +355,8 @@ def run_training(policy, cluster, server):
                 # update opponent pool
                 if step >= FLAGS.save_every * (opponents+1):
                     opponents += 1
-                    opponent_meta = os.path.basename(glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*.meta'))[-1])
-                    opponent_step = int(re.findall(r'model\.ckpt\-(\d+)\.meta', opponent_meta)[0])
+                    meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*.meta'))]
+                    opponent_step = max(int(re.findall(r'model\.ckpt\-(\d+)\.meta', f)[0]) for f in meta_files)
                     print("Add new opponent into pool at step {:d}".format(opponent_step))
                     # remove unused checkpoints manualy
                     for unused_step in range(last_opponent_step+1, opponent_step):
