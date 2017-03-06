@@ -24,9 +24,11 @@ flags.DEFINE_string("job_name", "", "Either 'ps' or 'worker'")
 flags.DEFINE_integer("task_index", 0, "Index of task within the job")
 flags.DEFINE_boolean('sync', False, 'Aggregate worker gradients synchronously.')
 
+flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
 flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
 flags.DEFINE_integer('num_playout_cpu', 1, 'Number of cpu for playout.')
-flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
+flags.DEFINE_integer("move_limit", 500,
+                     "Maximum number of moves per game.")
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
@@ -34,10 +36,10 @@ flags.DEFINE_float('gpu_memory_fraction', 0.15,
 flags.DEFINE_float('playout_gpu_memory_fraction', 0.01,
                    'config.per_process_gpu_memory_fraction for playout session')
 
-flags.DEFINE_integer('summary_checkpoint', 100, 'Interval steps to save summary.')
-flags.DEFINE_integer('opponent_checkpoint', 500, 'Interval steps to save policy as a new opponent.')
+flags.DEFINE_integer('summary_checkpoint', 10, 'Interval steps to save summary.')
+flags.DEFINE_integer('opponent_checkpoint', 100, 'Interval steps to save policy as a new opponent.')
 
-flags.DEFINE_string('logdir', '/tmp/logs',
+flags.DEFINE_string('logdir', '/tmp/logs/',
                     'Shared directory where to write RL policy train logs')
 flags.DEFINE_string('opponent_pool', '/tmp/opponents',
                     'Shared directory where to save trained policy weights for opponent')
@@ -68,13 +70,15 @@ def load_player(logdir):
     config.gpu_options.per_process_gpu_memory_fraction = FLAGS.playout_gpu_memory_fraction
     policy.start_session(config)
     policy.load_model()
-    player = ProbabilisticPolicyPlayer(policy, FLAGS.policy_temperature, move_limit=500)
+    player = ProbabilisticPolicyPlayer(policy, FLAGS.policy_temperature, move_limit=FLAGS.move_limit)
     return player
 
 
 def playout(step, num_games, value=zero_baseline):
     learner = load_player(FLAGS.logdir)
 
+    # Ensure opponent is same for all playout in same global step
+    np.random.seed(step)
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
     if FLAGS.verbose:
         print("Opponent is loaded from {}".format(opponent_policy_logdir))
@@ -159,7 +163,7 @@ def get_game_batch(step):
         try:
             (win_ratio, states, actions, rewards) = future.result()
             if FLAGS.verbose:
-                print("[Process {:d}] {:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win."
+                print("[Playout {:d}] {:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win."
                       .format(i,
                               num_game_per_cpu,
                               states.shape[0],
@@ -183,7 +187,7 @@ def get_game_batch(step):
     rewards = np.concatenate(rewards_list)
     elapsed_sec = time.time() - start_time
     if FLAGS.verbose:
-        print("[Total] {:d} games.".format(FLAGS.num_games) +
+        print("[Worker Batch] {:d} games.".format(FLAGS.num_games) +
               " {:d} states.".format(states.shape[0]) +
               " {:d} moves.".format(actions.shape[0]) +
               " {:d} rewards.".format(rewards.shape[0]) +
@@ -400,7 +404,7 @@ def run_training(policy, cluster, server):
             print("[Step {:d}]".format(step) +
                   " Loss: {:.4f},".format(loss) +
                   " Accuracy: {:.4f},".format(acc) +
-                  " Elapsed: {:3.2f}ms".format(float(elapsed_time*1000)))
+                  " Elapsed: {:3.2f}s".format(float(elapsed_time)))
 
             if is_chief:
                 # save checkpoint
