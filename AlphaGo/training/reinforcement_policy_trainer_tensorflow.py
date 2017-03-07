@@ -27,14 +27,15 @@ flags.DEFINE_boolean('sync', False, 'Aggregate worker gradients synchronously.')
 flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
 flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
 flags.DEFINE_integer('num_playout_cpu', 1, 'Number of cpu for playout.')
-flags.DEFINE_integer("move_limit", 500,
-                     "Maximum number of moves per game.")
+flags.DEFINE_integer("move_limit", 500, "Maximum number of moves per game.")
+
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
 flags.DEFINE_float('playout_gpu_memory_fraction', 0.01,
                    'config.per_process_gpu_memory_fraction for playout session')
+flags.DEFINE_boolean('log_device_placement', False, '')
 
 flags.DEFINE_integer('summary_checkpoint', 10, 'Interval steps to save summary.')
 flags.DEFINE_integer('opponent_checkpoint', 100, 'Interval steps to save policy as a new opponent.')
@@ -65,9 +66,10 @@ def zero_baseline(state):
 def load_player(logdir):
     policy = CNNPolicy(checkpoint_dir=logdir)
     policy.init_graph(train=False)
-    # config = tf.ConfigProto(device_count={"GPU": 0})
-    config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = FLAGS.playout_gpu_memory_fraction
+    #config = tf.ConfigProto(device_count={"GPU": 0},
+    #                        log_device_placement=False)
+    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
+    #config.gpu_options.per_process_gpu_memory_fraction = FLAGS.playout_gpu_memory_fraction
     policy.start_session(config)
     policy.load_model()
     player = ProbabilisticPolicyPlayer(policy, FLAGS.policy_temperature, move_limit=FLAGS.move_limit)
@@ -147,20 +149,14 @@ def playout(step, num_games, value=zero_baseline):
 def get_game_batch(step):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=FLAGS.num_playout_cpu)
     num_game_per_cpu = FLAGS.num_games/FLAGS.num_playout_cpu
-    futures = []
-    start_time = time.time()
-    for worker_idx in range(FLAGS.num_playout_cpu):
-        try:
-            future = executor.submit(playout, step, num_game_per_cpu)
-            futures.append(future)
-        except:
-            err, msg, _ = sys.exc_info()
-            sys.stderr.write("{} {}\n".format(err, msg))
-            sys.stderr.write(traceback.format_exc())
 
     win_ratio_list, states_list, actions_list, rewards_list = [], [], [], []
-    for i, future in enumerate(futures):
-        try:
+
+    start_time = time.time()
+    futures = [executor.submit(playout, step, num_game_per_cpu) for i in range(FLAGS.num_playout_cpu)]
+
+    try:
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
             (win_ratio, states, actions, rewards) = future.result()
             if FLAGS.verbose:
                 print("[Playout {:d}] {:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win."
@@ -174,12 +170,12 @@ def get_game_batch(step):
             states_list.append(states)
             actions_list.append(actions)
             rewards_list.append(rewards)
-        except concurrent.futures.TimeoutError:
-            sys.stderr.write('Playout timed out.\n')
-        except:
-            err, msg, _ = sys.exc_info()
-            sys.stderr.write("{} {}\n".format(err, msg))
-            sys.stderr.write(traceback.format_exc())
+    except concurrent.futures.TimeoutError:
+        sys.stderr.write('Playout timed out.\n')
+    except:
+        err, msg, _ = sys.exc_info()
+        sys.stderr.write("{} {}\n".format(err, msg))
+        sys.stderr.write(traceback.format_exc())
 
     win_ratio = np.mean(win_ratio_list)
     states = np.concatenate(states_list, axis=0)
@@ -452,7 +448,7 @@ def main(argv=None):
     cluster = tf.train.ClusterSpec({"ps": parameter_servers, "worker": workers})
 
     # start a server for a specific task
-    config = tf.ConfigProto()
+    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
     config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
     server = tf.train.Server(cluster,
                              config=config,
