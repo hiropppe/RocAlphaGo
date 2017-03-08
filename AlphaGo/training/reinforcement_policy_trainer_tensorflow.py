@@ -40,7 +40,7 @@ flags.DEFINE_boolean('log_device_placement', False, '')
 flags.DEFINE_integer('summary_checkpoint', 10, 'Interval steps to save summary.')
 flags.DEFINE_integer('opponent_checkpoint', 100, 'Interval steps to save policy as a new opponent.')
 
-flags.DEFINE_string('logdir', '/tmp/logs/',
+flags.DEFINE_string('logdir', '/tmp/logs/rl_policy/',
                     'Shared directory where to write RL policy train logs')
 flags.DEFINE_string('opponent_pool', '/tmp/opponents',
                     'Shared directory where to save trained policy weights for opponent')

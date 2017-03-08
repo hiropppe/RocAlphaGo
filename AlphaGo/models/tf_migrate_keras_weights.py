@@ -6,7 +6,7 @@ from AlphaGo.models.tf_policy import CNNPolicy
 
 flags = tf.app.flags
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
-flags.DEFINE_string('output_directory', './logs', 'Output directory')
+flags.DEFINE_string('output_directory', '/tmp/logs/sl_policy/', 'Output directory')
 FLAGS = flags.FLAGS
 
 

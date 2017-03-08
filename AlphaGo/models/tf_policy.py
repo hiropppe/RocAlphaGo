@@ -63,7 +63,7 @@ class CNNPolicy:
             self.saver = tf.train.Saver()
             self.init_op = tf.global_variables_initializer()
 
-    def start_session(self, config):
+    def start_session(self, config=None):
         self.sess = tf.Session(graph=self.g, config=config)
         self.sess.run(self.init_op)
 
