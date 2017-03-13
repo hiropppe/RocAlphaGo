@@ -1,0 +1,109 @@
+FROM nvidia/cuda:7.5-cudnn5-devel-ubuntu14.04
+
+MAINTAINER sergei <sergei.0910@gmail.com>
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:ubuntu-lxc/lxd-stable
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        vim \
+        git \
+        net-tools \
+        iputils-ping \
+        netcat \
+        libfreetype6-dev \
+        libpng12-dev \
+        libzmq3-dev \
+        pkg-config \
+        python \
+        python-dev \
+        python-numpy \
+        python-wheel \
+        python-mock \
+        rsync \
+        zip \
+        unzip \
+        g++ \
+        zlib1g-dev \
+        golang \
+        fuse \
+        rsyslog \
+        && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/*
+
+RUN curl -O https://bootstrap.pypa.io/get-pip.py && \
+    python get-pip.py && \
+    rm get-pip.py
+
+RUN pip --no-cache-dir install \
+        ipykernel \
+        jupyter \
+        matplotlib \
+        scipy \
+        sklearn \
+        pandas \
+        Pillow \
+        awscli \
+        && \
+    python -m ipykernel.kernelspec
+
+# Install Java8
+RUN add-apt-repository ppa:webupd8team/java && \
+    echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections && \
+    apt-get update && apt-get install -y oracle-java8-installer
+
+# Install Bazel for building tensorflow
+RUN wget https://github.com/bazelbuild/bazel/releases/download/0.4.4/bazel-0.4.4-installer-linux-x86_64.sh && \
+    chmod +x bazel-0.4.4-installer-linux-x86_64.sh && \
+    ./bazel-0.4.4-installer-linux-x86_64.sh --user
+
+# Copy cuDNN
+COPY cuda/include/* /usr/local/cuda/include/
+COPY cuda/lib64/* /usr/local/cuda/lib64/
+
+# Install Tensorflow from source
+#RUN git clone https://github.com/tensorflow/tensorflow && \
+#    cd tensorflow && \
+#    git checkout v1.0.1 && \
+#    export PATH="$PATH:$HOME/bin" && \
+#    export PYTHON_BIN_PATH=$(which python) && \
+#    export PYTHON_LIB_PATH="/usr/lib/python2.7/dist-packages" && \
+#    export CC_OPT_FLAGS="-march=native" && \
+#    export TF_NEED_JEMALLOC="Y" && \
+#    export TF_NEED_GCP="N" && \
+#    export TF_NEED_HDFS="N" && \
+#    export TF_ENABLE_XLA="y" && \
+#    export TF_NEED_OPENCL="N" && \
+#    export TF_NEED_CUDA="y" && \
+#    export TF_CUDA_VERSION="7.5" && \
+#    export CUDA_TOOLKIT_PATH="/usr/local/cuda" && \
+#    export TF_CUDNN_VERSION="5" && \
+#    ./configure && \
+#    bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package && \
+#    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg && \
+#    pip install /tmp/tensorflow_pkg/tensorflow-1.0.1-cp27-none-linux_x86_64.whl
+
+# For CUDA profiling, TensorFlow requires CUPTI.
+ENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
+
+# Install goofys
+RUN export GOPATH=/root/go && \
+    go get -v github.com/kahing/goofys && \
+    go install -v github.com/kahing/goofys
+
+# Copy AWS credentials
+RUN  mkdir /root/.aws
+COPY credentials /root/.aws/credentials
+
+# We just add a little wrapper script.
+COPY bootstrap.sh /
+
+# TensorBoard
+EXPOSE 6006
+
+CMD ["/bootstrap.sh"]
