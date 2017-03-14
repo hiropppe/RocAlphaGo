@@ -230,8 +230,8 @@ class CNNPolicy:
     def loss(self, probs, actionsholder, rewardsholder):
         with tf.variable_scope('loss') as scope:
             clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
-            good_probs = tf.reduce_sum(tf.mul(clip_probs, actionsholder), reduction_indices=[1])
-            eligibility = tf.mul(tf.log(good_probs), rewardsholder)
+            good_probs = tf.reduce_sum(tf.multiply(clip_probs, actionsholder), axis=[1])
+            eligibility = tf.multiply(tf.log(good_probs), rewardsholder)
             # loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
             loss = tf.reduce_mean(eligibility, name=scope.name)
         return loss

@@ -48,6 +48,10 @@ RUN pip --no-cache-dir install \
         sklearn \
         pandas \
         Pillow \
+        h5py \
+        sgf \
+        futures \
+        keras \
         awscli \
         && \
     python -m ipykernel.kernelspec
@@ -67,32 +71,36 @@ COPY cuda/include/* /usr/local/cuda/include/
 COPY cuda/lib64/* /usr/local/cuda/lib64/
 
 # Install Tensorflow from source
-#RUN git clone https://github.com/tensorflow/tensorflow && \
-#    cd tensorflow && \
-#    git checkout v1.0.1 && \
-#    export PATH="$PATH:$HOME/bin" && \
-#    export PYTHON_BIN_PATH=$(which python) && \
-#    export PYTHON_LIB_PATH="/usr/lib/python2.7/dist-packages" && \
-#    export CC_OPT_FLAGS="-march=native" && \
-#    export TF_NEED_JEMALLOC="Y" && \
-#    export TF_NEED_GCP="N" && \
-#    export TF_NEED_HDFS="N" && \
-#    export TF_ENABLE_XLA="y" && \
-#    export TF_NEED_OPENCL="N" && \
-#    export TF_NEED_CUDA="y" && \
-#    export TF_CUDA_VERSION="7.5" && \
-#    export CUDA_TOOLKIT_PATH="/usr/local/cuda" && \
-#    export TF_CUDNN_VERSION="5" && \
-#    ./configure && \
-#    bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package && \
-#    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg && \
-#    pip install /tmp/tensorflow_pkg/tensorflow-1.0.1-cp27-none-linux_x86_64.whl
+RUN git clone https://github.com/tensorflow/tensorflow && \
+    cd tensorflow && \
+    git checkout v1.0.1 && \
+#    git checkout 0.12.1 && \
+    export PATH=$PATH:$HOME/bin && \
+    export PYTHON_BIN_PATH=$(which python) && \
+    export PYTHON_LIB_PATH="/usr/lib/python2.7/dist-packages" && \
+    export CC_OPT_FLAGS="-march=native" && \
+    export TF_NEED_JEMALLOC="1" && \
+    export TF_NEED_GCP="0" && \
+    export TF_NEED_HDFS="0" && \
+    export TF_ENABLE_XLA="1" && \
+    export TF_NEED_OPENCL="0" && \
+    export TF_NEED_CUDA="1" && \
+    export GCC_HOST_COMPILER_PATH=$(which gcc) && \
+    export TF_CUDA_VERSION="7.5" && \
+    export CUDA_TOOLKIT_PATH="/usr/local/cuda" && \
+    export TF_CUDNN_VERSION="5" && \
+    export CUDNN_INSTALL_PATH="/usr/local/cuda" && \
+    export TF_CUDA_COMPUTE_CAPABILITIES="3.5,5.2" && \
+    ./configure && \
+    bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package && \
+    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg && \
+    pip install /tmp/tensorflow_pkg/tensorflow-1.0.1-cp27-none-linux_x86_64.whl
 
 # For CUDA profiling, TensorFlow requires CUPTI.
 ENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 # Install goofys
-RUN export GOPATH=/root/go && \
+RUN export GOPATH=$HOME/go && \
     go get -v github.com/kahing/goofys && \
     go install -v github.com/kahing/goofys
 
