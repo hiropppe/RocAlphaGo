@@ -263,7 +263,6 @@ def init_checkpoint_with_keras_weights(policy, cluster, server):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
             rep_op = tf.train.SyncReplicasOptimizer(grad_op,
                                                     replicas_to_aggregate=len(workers),
-                                                    replica_id=FLAGS.task_index,
                                                     total_num_replicas=len(workers),
                                                     use_locking=True)
 
@@ -323,7 +322,6 @@ def run_training(policy, cluster, server):
             if FLAGS.sync:
                 rep_op = tf.train.SyncReplicasOptimizer(grad_op,
                                                         replicas_to_aggregate=len(workers),
-                                                        replica_id=FLAGS.task_index,
                                                         total_num_replicas=len(workers),
                                                         use_locking=True)
                 """
