@@ -1,3 +1,5 @@
+# Dockerfile to make it easy running TensorFlow via Nvidia docker on EC2 g2 instance.
+
 FROM nvidia/cuda:7.5-cudnn5-devel-ubuntu14.04
 
 MAINTAINER sergei <sergei.0910@gmail.com>
@@ -62,27 +64,31 @@ RUN add-apt-repository ppa:webupd8team/java && \
     apt-get update && apt-get install -y oracle-java8-installer
 
 # Install Bazel for building tensorflow
-RUN wget https://github.com/bazelbuild/bazel/releases/download/0.4.4/bazel-0.4.4-installer-linux-x86_64.sh && \
-    chmod +x bazel-0.4.4-installer-linux-x86_64.sh && \
-    ./bazel-0.4.4-installer-linux-x86_64.sh --user
+# Note: Tensorflow v0.12.0 cannot build by bazel 0.4.4 (https://github.com/tensorflow/rust/issues/55)
+RUN wget https://github.com/bazelbuild/bazel/releases/download/0.4.3/bazel-0.4.3-installer-linux-x86_64.sh && \
+    chmod +x bazel-0.4.3-installer-linux-x86_64.sh && \
+    ./bazel-0.4.3-installer-linux-x86_64.sh --user
 
 # Copy cuDNN
 COPY cuda/include/* /usr/local/cuda/include/
 COPY cuda/lib64/* /usr/local/cuda/lib64/
 
+WORKDIR /root
+
 # Install Tensorflow from source
 RUN git clone https://github.com/tensorflow/tensorflow && \
     cd tensorflow && \
-    git checkout v1.0.1 && \
-#    git checkout 0.12.1 && \
-    export PATH=$PATH:$HOME/bin && \
+    git checkout v0.12.0
+
+# Note: http://zlib.net/zlib-1.2.8.tar.gz no longer available (https://github.com/tensorflow/tensorflow/issues/6594)
+COPY workspace.bzl /root/tensorflow/tensorflow/
+
+RUN cd tensorflow && \
+    export PATH=$PATH:/root/bin && \
     export PYTHON_BIN_PATH=$(which python) && \
     export PYTHON_LIB_PATH="/usr/lib/python2.7/dist-packages" && \
-    export CC_OPT_FLAGS="-march=native" && \
-    export TF_NEED_JEMALLOC="1" && \
     export TF_NEED_GCP="0" && \
     export TF_NEED_HDFS="0" && \
-    export TF_ENABLE_XLA="1" && \
     export TF_NEED_OPENCL="0" && \
     export TF_NEED_CUDA="1" && \
     export GCC_HOST_COMPILER_PATH=$(which gcc) && \
@@ -90,17 +96,21 @@ RUN git clone https://github.com/tensorflow/tensorflow && \
     export CUDA_TOOLKIT_PATH="/usr/local/cuda" && \
     export TF_CUDNN_VERSION="5" && \
     export CUDNN_INSTALL_PATH="/usr/local/cuda" && \
-    export TF_CUDA_COMPUTE_CAPABILITIES="3.5,5.2" && \
+    export TF_CUDA_COMPUTE_CAPABILITIES="3.0" && \
+#    export CC_OPT_FLAGS="-march=native" && \
+#    export TF_NEED_JEMALLOC="1" && \
+#    export TF_ENABLE_XLA="1" && \
     ./configure && \
     bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package && \
-    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg && \
-    pip install /tmp/tensorflow_pkg/tensorflow-1.0.1-cp27-none-linux_x86_64.whl
+    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg
+
+RUN pip install /tmp/tensorflow_pkg/tensorflow-0.12.0-cp27-none-linux_x86_64.whl
 
 # For CUDA profiling, TensorFlow requires CUPTI.
 ENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
 
 # Install goofys
-RUN export GOPATH=$HOME/go && \
+RUN export GOPATH=/root/go && \
     go get -v github.com/kahing/goofys && \
     go install -v github.com/kahing/goofys
 

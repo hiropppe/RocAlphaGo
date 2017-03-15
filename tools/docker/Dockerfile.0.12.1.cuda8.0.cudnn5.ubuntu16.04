@@ -1,0 +1,131 @@
+# Dockerfile to make it easy running TensorFlow via Nvidia docker on EC2 g2 instance.
+
+FROM nvidia/cuda:8.0-cudnn5-devel-ubuntu16.04
+
+MAINTAINER sergei <sergei.0910@gmail.com>
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common
+#    apt-get install -y --no-install-recommends software-properties-common && \
+#    add-apt-repository ppa:ubuntu-lxc/lxd-stable
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        vim \
+        git \
+        net-tools \
+        iputils-ping \
+        netcat \
+        libfreetype6-dev \
+        libpng12-dev \
+        libzmq3-dev \
+        pkg-config \
+        python \
+        python-dev \
+        python-numpy \
+        python-wheel \
+        python-mock \
+        rsync \
+        zip \
+        unzip \
+        g++ \
+        zlib1g-dev \
+        golang \
+        fuse \
+        rsyslog \
+        && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/*
+
+RUN curl -O https://bootstrap.pypa.io/get-pip.py && \
+    python get-pip.py && \
+    rm get-pip.py
+
+RUN pip --no-cache-dir install \
+        ipykernel \
+        jupyter \
+        matplotlib \
+        scipy \
+        sklearn \
+        pandas \
+        Pillow \
+        h5py \
+        sgf \
+        futures \
+        keras \
+        awscli \
+        && \
+    python -m ipykernel.kernelspec
+
+# Install Java8
+#RUN add-apt-repository ppa:webupd8team/java && \
+#    echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections && \
+#    apt-get update && apt-get install -y oracle-java8-installer
+
+# Install Bazel for building tensorflow
+# Note: Tensorflow v0.12.0 cannot build by bazel 0.4.4 (https://github.com/tensorflow/rust/issues/55)
+#RUN wget https://github.com/bazelbuild/bazel/releases/download/0.4.3/bazel-0.4.3-installer-linux-x86_64.sh && \
+#    chmod +x bazel-0.4.3-installer-linux-x86_64.sh && \
+#    ./bazel-0.4.3-installer-linux-x86_64.sh --user
+
+# Copy cuDNN
+COPY cuda/include/* /usr/local/cuda/include/
+COPY cuda/lib64/* /usr/local/cuda/lib64/
+
+WORKDIR /root
+
+# Install Tensorflow from source
+#RUN git clone https://github.com/tensorflow/tensorflow && \
+#    cd tensorflow && \
+#    git checkout v0.12.0
+
+# Note: http://zlib.net/zlib-1.2.8.tar.gz no longer available (https://github.com/tensorflow/tensorflow/issues/6594)
+#COPY workspace.bzl /root/tensorflow/tensorflow/
+
+#RUN cd tensorflow && \
+#    export PATH=$PATH:/root/bin && \
+#    export PYTHON_BIN_PATH=$(which python) && \
+#    export PYTHON_LIB_PATH="/usr/lib/python2.7/dist-packages" && \
+#    export CC_OPT_FLAGS="-march=native" && \
+#    export TF_NEED_JEMALLOC="1" && \
+#    export TF_NEED_GCP="0" && \
+#    export TF_NEED_HDFS="0" && \
+#    export TF_ENABLE_XLA="1" && \
+#    export TF_NEED_OPENCL="0" && \
+#    export TF_NEED_CUDA="1" && \
+#    export GCC_HOST_COMPILER_PATH=$(which gcc) && \
+#    export TF_CUDA_VERSION="7.5" && \
+#    export CUDA_TOOLKIT_PATH="/usr/local/cuda" && \
+#    export TF_CUDNN_VERSION="5" && \
+#    export CUDNN_INSTALL_PATH="/usr/local/cuda" && \
+#    export TF_CUDA_COMPUTE_CAPABILITIES="3.0" && \
+#    ./configure && \
+#    bazel build --config=opt --config=cuda //tensorflow/tools/pip_package:build_pip_package && \
+#    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg
+
+RUN pip --no-cache-dir install \
+    http://storage.googleapis.com/tensorflow/linux/gpu/tensorflow_gpu-0.12.1-cp27-none-linux_x86_64.whl
+
+#RUN pip install /tmp/tensorflow_pkg/tensorflow-0.12.0-cp27-none-linux_x86_64.whl
+
+# For CUDA profiling, TensorFlow requires CUPTI.
+ENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
+
+# Install goofys
+#RUN export GOPATH=/root/go && \
+#    go get -v github.com/kahing/goofys && \
+#    go install -v github.com/kahing/goofys
+
+# Copy AWS credentials
+#RUN  mkdir /root/.aws
+#COPY credentials /root/.aws/credentials
+
+# We just add a little wrapper script.
+#COPY bootstrap.sh /
+
+# TensorBoard
+#EXPOSE 6006
+
+#CMD ["/bootstrap.sh"]
