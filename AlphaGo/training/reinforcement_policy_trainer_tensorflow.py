@@ -56,7 +56,8 @@ FLAGS = flags.FLAGS
 # cluster specification
 parameter_servers = ["ps0:2222"]
 workers = ["worker0:2222",
-           "worker1:2222"]
+           "worker1:2222",
+           "worker2:2222"]
 
 
 def zero_baseline(state):
@@ -263,6 +264,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
             rep_op = tf.train.SyncReplicasOptimizer(grad_op,
                                                     replicas_to_aggregate=len(workers),
+                                                    replica_id=FLAGS.task_index,
                                                     total_num_replicas=len(workers),
                                                     use_locking=True)
 
@@ -284,7 +286,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server):
                              init_op=init_op)
 
     config = tf.ConfigProto(allow_soft_placement=True)
-    with sv.prepare_or_wait_for_session(server.target, config=config) as sess:
+    with sv.managed_session(server.target, config=config) as sess:
         if is_chief:
             sv.start_queue_runners(sess, [chief_queue_runner])
             sess.run(init_token_op)
@@ -322,6 +324,7 @@ def run_training(policy, cluster, server):
             if FLAGS.sync:
                 rep_op = tf.train.SyncReplicasOptimizer(grad_op,
                                                         replicas_to_aggregate=len(workers),
+                                                        replica_id=FLAGS.task_index,
                                                         total_num_replicas=len(workers),
                                                         use_locking=True)
                 """
