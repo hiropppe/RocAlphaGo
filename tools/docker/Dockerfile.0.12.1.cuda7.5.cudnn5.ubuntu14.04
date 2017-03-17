@@ -20,6 +20,7 @@ RUN apt-get update && \
         libfreetype6-dev \
         libpng12-dev \
         libzmq3-dev \
+        libcurl3-dev \
         pkg-config \
         python \
         python-dev \
@@ -69,11 +70,14 @@ RUN wget https://github.com/bazelbuild/bazel/releases/download/0.4.3/bazel-0.4.3
     chmod +x bazel-0.4.3-installer-linux-x86_64.sh && \
     ./bazel-0.4.3-installer-linux-x86_64.sh --user
 
-# Copy cuDNN
-COPY cudnn/cuda-7.5/include/* /usr/local/cuda/include/
-COPY cudnn/cuda-7.5/lib64/* /usr/local/cuda/lib64/
-
 WORKDIR /root
+
+# Copy cuDNN
+COPY cudnn/cudnn-7.5-linux-x64-v5.1.solitairetheme8 /tmp/
+
+RUN tar xzf /tmp/cudnn-7.5-linux-x64-v5.1.solitairetheme8 && \
+    cp -a cuda/include/* /usr/local/cuda/include/ && \
+    cp -a cuda/lib64/* /usr/local/cuda/lib64/
 
 # Install Tensorflow from source
 RUN git clone https://github.com/tensorflow/tensorflow && \
@@ -87,7 +91,7 @@ RUN cd tensorflow && \
     export PATH=$PATH:/root/bin && \
     export PYTHON_BIN_PATH=$(which python) && \
     export PYTHON_LIB_PATH="/usr/lib/python2.7/dist-packages" && \
-    export TF_NEED_GCP="0" && \
+    export TF_NEED_GCP="1" && \
     export TF_NEED_HDFS="0" && \
     export TF_NEED_OPENCL="0" && \
     export TF_NEED_CUDA="1" && \
