@@ -79,6 +79,9 @@ RUN export GOPATH=/root/go && \
 RUN  mkdir /root/.aws
 COPY credentials /root/.aws/credentials
 
+# Force checkout by update
+RUN echo "2017-03-21 18:05:00"
+
 # Checkout repository 
 RUN git clone https://github.com/hiropppe/RocAlphaGo.git && \
     cd RocAlphaGo && \
@@ -88,3 +91,11 @@ RUN git clone https://github.com/hiropppe/RocAlphaGo.git && \
 COPY bootstrap.sh /
 
 CMD ["/bootstrap.sh"]
+
+# Puts cluster info 
+COPY cluster /
+
+# Puts scripts for distributed training
+COPY run_ps.sh /
+COPY run_worker.sh /
+COPY run_worker_for_init.sh /
