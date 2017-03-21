@@ -79,10 +79,12 @@ RUN export GOPATH=/root/go && \
 RUN  mkdir /root/.aws
 COPY credentials /root/.aws/credentials
 
+# Checkout repository 
+RUN git clone https://github.com/hiropppe/RocAlphaGo.git && \
+    cd RocAlphaGo && \
+    git checkout develop2
+
 # We just add a little wrapper script.
 COPY bootstrap.sh /
-
-# TensorBoard
-EXPOSE 6006
 
 CMD ["/bootstrap.sh"]
