@@ -20,6 +20,7 @@ from AlphaGo.models.tf_policy import CNNPolicy
 
 # input flags
 flags = tf.app.flags
+flags.DEFINE_string("cluster_spec", "", "Cluster specification")
 flags.DEFINE_string("job_name", "", "Either 'ps' or 'worker'")
 flags.DEFINE_integer("task_index", 0, "Index of task within the job")
 flags.DEFINE_boolean('sync', False, 'Aggregate worker gradients synchronously.')
@@ -33,16 +34,14 @@ flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
-flags.DEFINE_float('playout_gpu_memory_fraction', 0.01,
-                   'config.per_process_gpu_memory_fraction for playout session')
 flags.DEFINE_boolean('log_device_placement', False, '')
 
 flags.DEFINE_integer('summary_checkpoint', 10, 'Interval steps to save summary.')
 flags.DEFINE_integer('opponent_checkpoint', 100, 'Interval steps to save policy as a new opponent.')
 
-flags.DEFINE_string('logdir', '/tmp/logs/rl_policy/',
+flags.DEFINE_string('logdir', '/mnt/logs/rl_policy',
                     'Shared directory where to write RL policy train logs')
-flags.DEFINE_string('opponent_pool', '/tmp/opponents',
+flags.DEFINE_string('opponent_pool', '/mnt/opponents',
                     'Shared directory where to save trained policy weights for opponent')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
@@ -53,13 +52,6 @@ flags.DEFINE_boolean('verbose', True, '')
 FLAGS = flags.FLAGS
 
 
-# cluster specification
-parameter_servers = ["ps0:2222"]
-workers = ["worker0:2222",
-           "worker1:2222",
-           "worker2:2222"]
-
-
 def zero_baseline(state):
     return 0
 
@@ -67,10 +59,7 @@ def zero_baseline(state):
 def load_player(logdir):
     policy = CNNPolicy(checkpoint_dir=logdir)
     policy.init_graph(train=False)
-    #config = tf.ConfigProto(device_count={"GPU": 0},
-    #                        log_device_placement=False)
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
-    #config.gpu_options.per_process_gpu_memory_fraction = FLAGS.playout_gpu_memory_fraction
     policy.start_session(config)
     policy.load_model()
     player = ProbabilisticPolicyPlayer(policy, FLAGS.policy_temperature, move_limit=FLAGS.move_limit)
@@ -446,7 +435,9 @@ def run_training(policy, cluster, server):
 
 
 def main(argv=None):
-    cluster = tf.train.ClusterSpec({"ps": parameter_servers, "worker": workers})
+    from ast import literal_eval
+    cluster_spec = literal_eval(open(FLAGS.cluster_spec).read())
+    cluster = tf.train.ClusterSpec(cluster_spec)
 
     # start a server for a specific task
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
