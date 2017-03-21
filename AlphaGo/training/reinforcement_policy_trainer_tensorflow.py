@@ -228,7 +228,7 @@ def init_keras_weight_setter():
     return keras_weight
 
 
-def init_checkpoint_with_keras_weights(policy, cluster, server):
+def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
     weight_setter = init_keras_weight_setter()
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
@@ -252,9 +252,9 @@ def init_checkpoint_with_keras_weights(policy, cluster, server):
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
             rep_op = tf.train.SyncReplicasOptimizer(grad_op,
-                                                    replicas_to_aggregate=len(workers),
+                                                    replicas_to_aggregate=num_workers,
                                                     replica_id=FLAGS.task_index,
-                                                    total_num_replicas=len(workers),
+                                                    total_num_replicas=num_workers,
                                                     use_locking=True)
 
             rep_op.minimize(loss_op, global_step=global_step)
@@ -287,7 +287,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server):
         sv.stop()
 
 
-def run_training(policy, cluster, server):
+def run_training(policy, cluster, server, num_workers):
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
                    worker_device="/job:worker/task:%d" % FLAGS.task_index,
@@ -312,9 +312,9 @@ def run_training(policy, cluster, server):
 
             if FLAGS.sync:
                 rep_op = tf.train.SyncReplicasOptimizer(grad_op,
-                                                        replicas_to_aggregate=len(workers),
+                                                        replicas_to_aggregate=num_workers,
                                                         replica_id=FLAGS.task_index,
-                                                        total_num_replicas=len(workers),
+                                                        total_num_replicas=num_workers,
                                                         use_locking=True)
                 """
                 grads = rep_op.compute_gradients(loss_op)
@@ -437,6 +437,7 @@ def run_training(policy, cluster, server):
 def main(argv=None):
     from ast import literal_eval
     cluster_spec = literal_eval(open(FLAGS.cluster_spec).read())
+    num_workers = len(cluster_spec['worker'])
     cluster = tf.train.ClusterSpec(cluster_spec)
 
     # start a server for a specific task
@@ -452,9 +453,9 @@ def main(argv=None):
         server.join()
     elif FLAGS.job_name == 'worker':
         if FLAGS.keras_weights:
-            init_checkpoint_with_keras_weights(learner_policy, cluster, server)
+            init_checkpoint_with_keras_weights(learner_policy, cluster, server, num_workers)
         else:
-            run_training(learner_policy, cluster, server)
+            run_training(learner_policy, cluster, server, num_workers)
 
 
 if __name__ == '__main__':
