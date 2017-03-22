@@ -34,7 +34,7 @@ flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
-flags.DEFINE_boolean('log_device_placement', True, '')
+flags.DEFINE_boolean('log_device_placement', False, '')
 
 flags.DEFINE_integer('checkpoint', 5, 'Interval steps to execute checkpoint.')
 flags.DEFINE_integer('opponent_checkpoint', 10, 'Interval steps to save policy as a new opponent.')
