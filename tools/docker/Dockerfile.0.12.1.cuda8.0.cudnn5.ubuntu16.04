@@ -99,3 +99,5 @@ COPY cluster /
 COPY run_ps.sh /
 COPY run_worker.sh /
 COPY run_worker_for_init.sh /
+
+RUN mkdir /tmp/logs
