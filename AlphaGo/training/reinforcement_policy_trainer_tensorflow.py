@@ -36,11 +36,13 @@ flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
 flags.DEFINE_boolean('log_device_placement', False, '')
 
-flags.DEFINE_integer('summary_checkpoint', 10, 'Interval steps to save summary.')
-flags.DEFINE_integer('opponent_checkpoint', 100, 'Interval steps to save policy as a new opponent.')
+flags.DEFINE_integer('checkpoint', 5, 'Interval steps to execute checkpoint.')
+flags.DEFINE_integer('opponent_checkpoint', 10, 'Interval steps to save policy as a new opponent.')
 
-flags.DEFINE_string('logdir', '/mnt/logs/rl_policy',
-                    'Shared directory where to write RL policy train logs')
+flags.DEFINE_string('logdir', '/mnt/s3/logs',
+                    'Shared directory where to write train logs.')
+flags.DEFINE_string('summary_logdir', '/tmp/logs',
+                    'Directory where to write summary logs.')
 flags.DEFINE_string('opponent_pool', '/mnt/opponents',
                     'Shared directory where to save trained policy weights for opponent')
 
@@ -188,8 +190,9 @@ def get_game_batch(step):
         err, msg, _ = sys.exc_info()
         sys.stderr.write("{} {}\n".format(err, msg))
         sys.stderr.write(traceback.format_exc())
-        print('Shutting down executor with nowait.')
-        executor.shutdown(wair=False)
+        if FLAGS.verbose:
+            print('Shutting down executor with nowait.')
+        executor.shutdown(wait=False)
 
     return win_ratio, states, actions, rewards
 
@@ -364,14 +367,16 @@ def run_training(policy, cluster, server, num_workers):
         policy.probs = probs_op
         policy.statesholder = statesholder
 
-        if FLAGS.sync and is_chief:
-            sv.start_queue_runners(sess, [chief_queue_runner])
-            sess.run(init_token_op)
+        if is_chief:
+            summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)
+            if FLAGS.sync:
+                sv.start_queue_runners(sess, [chief_queue_runner])
+                sess.run(init_token_op)
 
         # perform training cycles
         step = 0
-        reports = opponents = 0
-        last_opponent_step = 0
+        reports = 0
+        opponents = len(glob.glob(os.path.join(FLAGS.opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
 
@@ -393,40 +398,30 @@ def run_training(policy, cluster, server, num_workers):
                   " Elapsed: {:3.2f}s".format(float(elapsed_time)))
 
             if is_chief:
-                # save checkpoint
-                if FLAGS.verbose:
-                    print("Save checkpoint at step {:d}.").format(step)
-                sv.saver.save(sess, sv.save_path, global_step=step)
+                try:
+                    # execute checkpoint manually
+                    if step >= FLAGS.checkpoint * (reports+1):
+                        print("Execute checkpoint at step {:d}.").format(step)
+                        reports += 1
+                        sv.saver.save(sess, sv.save_path, global_step=step)
+                        summary_writer.add_summary(summary, global_step=step)
+                        summary_writer.flush()
 
-                if step >= FLAGS.summary_checkpoint * (reports+1):
-                    # save summary
-                    print("Save summary at step {:d}.").format(step)
-                    reports += 1
-                    sv.summary_computed(sess, summary, global_step=step)
-                    sv.summary_writer.flush()
-
-                # update opponent pool
-                if step >= FLAGS.opponent_checkpoint * (opponents+1):
-                    opponents += 1
-                    meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*.meta'))]
-                    opponent_step = max(int(re.findall(r'model\.ckpt\-(\d+)\.meta', f)[0]) for f in meta_files)
-                    print("Add new opponent into pool at step {:d}".format(opponent_step))
-                    # remove unused checkpoints manualy
-                    for unused_step in range(last_opponent_step+1, opponent_step):
-                        if os.path.exists(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.meta'.format(unused_step))):
-                            if FLAGS.verbose:
-                                print('Deleting checkpoint at step {:d}.'.format(unused_step))
-                            os.remove(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.meta'.format(unused_step)))
-                            os.remove(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.index'.format(unused_step)))
-                            os.remove(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.data-00000-of-00001'.format(unused_step)))
-                    # copy checkpoint files into pool
-                    new_opponent_path = os.path.join(FLAGS.opponent_pool, str(opponent_step))
-                    os.mkdir(new_opponent_path)
-                    for src in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
-                        shutil.copy2(src, new_opponent_path)
-                    shutil.copy2(os.path.join(FLAGS.logdir, 'checkpoint'), new_opponent_path)
-
-                    last_opponent_step = opponent_step
+                    # update opponent pool
+                    if step >= FLAGS.opponent_checkpoint * (opponents+1):
+                        print("Update opponent pool at step {:d}.").format(step)
+                        opponents += 1
+                        meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*.meta'))]
+                        opponent_step = max(int(re.findall(r'model\.ckpt\-(\d+)\.meta', f)[0]) for f in meta_files)
+                        new_opponent_path = os.path.join(FLAGS.opponent_pool, str(opponent_step))
+                        os.mkdir(new_opponent_path)
+                        for src in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
+                            shutil.copy2(src, new_opponent_path)
+                        shutil.copy2(os.path.join(FLAGS.logdir, 'checkpoint'), new_opponent_path)
+                except:
+                    err, msg, _ = sys.exc_info()
+                    sys.stderr.write("{} {}\n".format(err, msg))
+                    sys.stderr.write(traceback.format_exc())
 
     if is_chief:
         sv.request_stop()
