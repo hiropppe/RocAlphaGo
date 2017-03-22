@@ -34,7 +34,7 @@ flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
-flags.DEFINE_boolean('log_device_placement', False, '')
+flags.DEFINE_boolean('log_device_placement', True, '')
 
 flags.DEFINE_integer('checkpoint', 5, 'Interval steps to execute checkpoint.')
 flags.DEFINE_integer('opponent_checkpoint', 10, 'Interval steps to save policy as a new opponent.')
@@ -61,10 +61,13 @@ def zero_baseline(state):
 def load_player(logdir):
     policy = CNNPolicy(checkpoint_dir=logdir)
     policy.init_graph(train=False)
-    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
+    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
+                            device_count={'GPU': 1})
     policy.start_session(config)
     policy.load_model()
-    player = ProbabilisticPolicyPlayer(policy, FLAGS.policy_temperature, move_limit=FLAGS.move_limit)
+    player = ProbabilisticPolicyPlayer(policy,
+                                       FLAGS.policy_temperature,
+                                       move_limit=FLAGS.move_limit)
     return player
 
 
@@ -235,7 +238,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
     weight_setter = init_keras_weight_setter()
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
-                   worker_device="/job:worker/task:%d" % FLAGS.task_index,
+                   worker_device="/job:worker/task:{:d}".format(FLAGS.task_index),
                    cluster=cluster)):
 
         # count the number of updates
@@ -293,7 +296,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
 def run_training(policy, cluster, server, num_workers):
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
-                   worker_device="/job:worker/task:%d" % FLAGS.task_index,
+                   worker_device="/job:worker/task:{:d}".format(FLAGS.task_index),
                    cluster=cluster)):
 
         # count the number of updates
@@ -436,7 +439,8 @@ def main(argv=None):
     cluster = tf.train.ClusterSpec(cluster_spec)
 
     # start a server for a specific task
-    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
+    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
+                            device_count={'GPU': 1})
     config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
     server = tf.train.Server(cluster,
                              config=config,
