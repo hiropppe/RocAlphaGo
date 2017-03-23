@@ -67,7 +67,7 @@ def load_player(logdir):
         filters = model['config'][0]['config']['nb_filter']        
         # We play games between the current policy network and
         # a randomly selected previous iteration of the policy network.
-        checkpoint_dir = np.random.choice(glob.glob(os.path.join(logdir, '*')))
+        checkpoint_dir = np.random.choice(glob.glob(os.path.join(logdir, '[0-9]*')))
         if FLAGS.verbose:
             print("Randomly selected previous iteration of the SL policy network. {}".format(checkpoint_dir))
         policy_net = tf_policy.CNNPolicy(checkpoint_dir=checkpoint_dir,
@@ -105,10 +105,12 @@ def playout(step, num_games, value=zero_baseline):
 
     learner_won = [None] * num_games
 
-    learner_color = [go.BLACK if i % 2 == 0 else go.WHITE for i in range(num_games)]
-    odd_states = states[1::2]
-    moves = opponent.get_moves(odd_states)
-    for st, mv in zip(odd_states, moves):
+    # Wanna change color by step for mini-batch of 1 game (no batch)
+    base = step % 2
+    learner_color = [go.BLACK if (base+i) % 2 == 0 else go.WHITE for i in range(num_games)]
+    white_states = states[0 if base else 1::2]
+    moves = opponent.get_moves(white_states)
+    for st, mv in zip(white_states, moves):
         st.do_move(mv)
 
     current = learner
@@ -145,7 +147,6 @@ def playout(step, num_games, value=zero_baseline):
 
     wins = sum(state.get_winner() == pc for (state, pc) in zip(states, learner_color))
 
-    # dim ordering is different to keras input
     state_batch = np.concatenate(state_batch, axis=0)
     action_batch = np.concatenate(action_batch, axis=0)
     reward_batch = np.concatenate(reward_batch)
@@ -157,47 +158,8 @@ def playout(step, num_games, value=zero_baseline):
 
 
 def get_game_batch(step):
-    # executor = concurrent.futures.ThreadPoolExecutor(max_workers=FLAGS.num_playout_cpu)
-    # num_game_per_cpu = FLAGS.num_games/FLAGS.num_playout_cpu
-
-    # win_ratio_list, states_list, actions_list, rewards_list = [], [], [], []
-
     start_time = time.time()
-    """
-    futures = [executor.submit(playout, step, num_game_per_cpu) for i in range(FLAGS.num_playout_cpu)]
-
-    try:
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            (win_ratio, states, actions, rewards) = future.result()
-            if FLAGS.verbose:
-                print("[Playout {:d}] {:d} games. {:d} states. {:d} moves. {:d} rewards. {:.2f}% win."
-                      .format(i,
-                              num_game_per_cpu,
-                              states.shape[0],
-                              actions.shape[0],
-                              rewards.shape[0],
-                              100 * win_ratio))
-            win_ratio_list.append(win_ratio)
-            states_list.append(states)
-            actions_list.append(actions)
-            rewards_list.append(rewards)
-    except concurrent.futures.TimeoutError:
-        sys.stderr.write('Playout timed out.\n')
-    except:
-        err, msg, _ = sys.exc_info()
-        sys.stderr.write("{} {}\n".format(err, msg))
-        sys.stderr.write(traceback.format_exc())
-    """
-
     (win_ratio, states, actions, rewards) = playout(step, FLAGS.num_games)
-
-    """
-    win_ratio = np.mean(win_ratio_list)
-    states = np.concatenate(states_list, axis=0)
-    actions = np.concatenate(actions_list, axis=0)
-    rewards = np.concatenate(rewards_list)
-    """
-
     elapsed_sec = time.time() - start_time
 
     if FLAGS.verbose:
@@ -208,19 +170,6 @@ def get_game_batch(step):
               " {:.2f}% win.".format(100*win_ratio) +
               " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
 
-    """
-    try:
-        if FLAGS.verbose:
-            print('Shutting down executor.')
-        executor.shutdown()
-    except:
-        err, msg, _ = sys.exc_info()
-        sys.stderr.write("{} {}\n".format(err, msg))
-        sys.stderr.write(traceback.format_exc())
-        if FLAGS.verbose:
-            print('Shutting down executor with nowait.')
-        executor.shutdown(wait=False)
-    """
     return win_ratio, states, actions, rewards
 
 
