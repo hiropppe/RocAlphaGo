@@ -16,6 +16,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run GTP')
     parser.add_argument("policy_checkpoint_directory",
                         help="Policy network checkpoint directory")
+    parser.add_argument("--filters", type=int, default=192,
+                        help="Number of filters")
     parser.add_argument("--n-playout", type=int, default=10,
                         help="Number of simulation for each play")
     parser.add_argument("--time", "-t", type=str, default='2000 50 180 6',
@@ -29,7 +31,8 @@ if __name__ == "__main__":
     # value net is not implemented yet
     value_net = None
 
-    policy_net = tf_policy.CNNPolicy(checkpoint_dir=args.policy_checkpoint_directory)
+    policy_net = tf_policy.CNNPolicy(checkpoint_dir=args.policy_checkpoint_directory,
+                                     filters=args.filters)
     policy_net.init_graph()
     policy_net.start_session()
     policy_net.load_model()
