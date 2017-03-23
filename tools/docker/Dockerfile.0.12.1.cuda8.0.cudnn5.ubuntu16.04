@@ -50,7 +50,7 @@ RUN pip --no-cache-dir install \
         h5py \
         sgf \
         futures \
-        keras \
+        keras==1.2.0 \
         awscli \
         && \
     python -m ipykernel.kernelspec
