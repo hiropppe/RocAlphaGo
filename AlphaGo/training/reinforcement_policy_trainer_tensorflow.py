@@ -2,6 +2,7 @@
 
 import concurrent.futures
 import glob
+import json
 import numpy as np
 import os
 import re
@@ -13,10 +14,9 @@ import tensorflow as tf
 
 import AlphaGo.go as go
 
-from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
+from AlphaGo.ai import ProbabilisticPolicyPlayer
 from AlphaGo.util import flatten_idx
-from AlphaGo.models.tf_policy import CNNPolicy
-
+from AlphaGo.models import policy, tf_policy
 
 # input flags
 flags = tf.app.flags
@@ -59,13 +59,29 @@ def zero_baseline(state):
 
 
 def load_player(logdir):
-    policy = CNNPolicy(checkpoint_dir=logdir)
-    policy.init_graph(train=False)
+    # See as migrated Keras weights if model.json exists.
+    if os.path.exists(os.path.join(logdir, 'model.json')):
+        # Get filter size from json
+        data = json.load(open(os.path.join(logdir, 'model.json')))
+        model = json.loads(data['keras_model'])
+        filters = model['config'][0]['config']['nb_filter']        
+        # We play games between the current policy network and
+        # a randomly selected previous iteration of the policy network.
+        checkpoint_dir = np.random.choice(glob.glob(os.path.join(logdir, '*')))
+        if FLAGS.verbose:
+            print("Randomly selected previous iteration of the SL policy network. {}".format(checkpoint_dir))
+        policy_net = tf_policy.CNNPolicy(checkpoint_dir=checkpoint_dir,
+                                         filters=filters)
+    else:
+        policy_net = tf_policy.CNNPolicy(checkpoint_dir=logdir)
+
+    policy_net.init_graph(train=False)
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
                             device_count={'GPU': 1})
-    policy.start_session(config)
-    policy.load_model()
-    player = ProbabilisticPolicyPlayer(policy,
+    policy_net.start_session(config)
+    policy_net.load_model()
+
+    player = ProbabilisticPolicyPlayer(policy_net,
                                        FLAGS.policy_temperature,
                                        move_limit=FLAGS.move_limit)
     return player
@@ -74,11 +90,9 @@ def load_player(logdir):
 def playout(step, num_games, value=zero_baseline):
     learner = load_player(FLAGS.logdir)
 
-    # Ensure opponent is same for all playout in same global step
-    np.random.seed(step)
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
     if FLAGS.verbose:
-        print("Opponent is loaded from {}".format(opponent_policy_logdir))
+        print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
     opponent = load_player(opponent_policy_logdir)
 
     board_size = learner.policy.bsize
@@ -99,6 +113,7 @@ def playout(step, num_games, value=zero_baseline):
 
     current = learner
     other = opponent
+
     idxs_to_unfinished_states = {i: states[i] for i in range(num_games)}
 
     while len(idxs_to_unfinished_states) > 0:
@@ -142,12 +157,13 @@ def playout(step, num_games, value=zero_baseline):
 
 
 def get_game_batch(step):
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=FLAGS.num_playout_cpu)
-    num_game_per_cpu = FLAGS.num_games/FLAGS.num_playout_cpu
+    # executor = concurrent.futures.ThreadPoolExecutor(max_workers=FLAGS.num_playout_cpu)
+    # num_game_per_cpu = FLAGS.num_games/FLAGS.num_playout_cpu
 
-    win_ratio_list, states_list, actions_list, rewards_list = [], [], [], []
+    # win_ratio_list, states_list, actions_list, rewards_list = [], [], [], []
 
     start_time = time.time()
+    """
     futures = [executor.submit(playout, step, num_game_per_cpu) for i in range(FLAGS.num_playout_cpu)]
 
     try:
@@ -171,12 +187,19 @@ def get_game_batch(step):
         err, msg, _ = sys.exc_info()
         sys.stderr.write("{} {}\n".format(err, msg))
         sys.stderr.write(traceback.format_exc())
+    """
 
+    (win_ratio, states, actions, rewards) = playout(step, FLAGS.num_games)
+
+    """
     win_ratio = np.mean(win_ratio_list)
     states = np.concatenate(states_list, axis=0)
     actions = np.concatenate(actions_list, axis=0)
     rewards = np.concatenate(rewards_list)
+    """
+
     elapsed_sec = time.time() - start_time
+
     if FLAGS.verbose:
         print("[Worker Batch] {:d} games.".format(FLAGS.num_games) +
               " {:d} states.".format(states.shape[0]) +
@@ -185,6 +208,7 @@ def get_game_batch(step):
               " {:.2f}% win.".format(100*win_ratio) +
               " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
 
+    """
     try:
         if FLAGS.verbose:
             print('Shutting down executor.')
@@ -196,7 +220,7 @@ def get_game_batch(step):
         if FLAGS.verbose:
             print('Shutting down executor with nowait.')
         executor.shutdown(wait=False)
-
+    """
     return win_ratio, states, actions, rewards
 
 
@@ -442,12 +466,13 @@ def main(argv=None):
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
                             device_count={'GPU': 1})
     config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
+
     server = tf.train.Server(cluster,
                              config=config,
                              job_name=FLAGS.job_name,
                              task_index=FLAGS.task_index)
 
-    learner_policy = CNNPolicy(checkpoint_dir=FLAGS.logdir)
+    learner_policy = tf_policy.CNNPolicy(checkpoint_dir=FLAGS.logdir)
     if FLAGS.job_name == 'ps':
         server.join()
     elif FLAGS.job_name == 'worker':
