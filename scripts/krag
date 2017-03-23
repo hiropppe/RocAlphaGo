@@ -1,0 +1,63 @@
+from AlphaGo import ai
+from AlphaGo import timer
+
+from AlphaGo.models import policy
+
+from interface.gtp_wrapper import GTPGameConnector, ExtendedGtpEngine
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description='Run GTP')
+    parser.add_argument("model",
+                        help="Policy network model json.")
+    parser.add_argument("weights",
+                        help="Policy network weights hdf5.")
+    parser.add_argument("--n-playout", type=int, default=10,
+                        help="Number of simulation for each play")
+    parser.add_argument("--time", "-t", type=str, default='2000 50 180 6',
+                        help="Time settings supporting Canadian byo-yomi. \
+                              Main time, Byo-yomi time and Byo-yomi stone")
+    parser.add_argument("--server", default=False, action="store_true",
+                        help="Server mode")
+
+    args = parser.parse_args()
+
+    # value net is not implemented yet
+    value_net = None
+
+    policy_net = policy.CNNPolicy.load_model(args.model)
+    policy_net.model.load_weights(args.weights)
+
+    # fast rollout is not implemented yet
+    fast_policy_net = policy_net
+
+    m, ms, b, bs = [(int)(t) for t in args.time.split()]
+
+    player = ai.MCTSPlayer(value_net,
+                           policy_net,
+                           fast_policy_net,
+                           timer=timer.Canadian(m, ms, b, bs),
+                           n_playout=args.n_playout)
+
+    gtp_game = GTPGameConnector(player)
+    gtp_engine = ExtendedGtpEngine(gtp_game, name='RocAlphaGo', version='0.0')
+
+    if args.server:
+        from flask import Flask
+        from flask import request
+
+        app = Flask(__name__)
+
+        @app.route('/gtp')
+        def gtp():
+            cmd = request.args.get('cmd')
+            print(cmd)
+            engine_reply = gtp_engine.send(cmd)
+            print(engine_reply)
+            return engine_reply
+
+        app.run(host="0.0.0.0", debug=False)
+    else:
+        from interface.gtp_wrapper import run_gtp
+        run_gtp(player)
