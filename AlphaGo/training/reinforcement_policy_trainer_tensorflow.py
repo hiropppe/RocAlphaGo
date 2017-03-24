@@ -39,11 +39,11 @@ flags.DEFINE_boolean('log_device_placement', False, '')
 flags.DEFINE_integer('checkpoint', 5, 'Interval steps to execute checkpoint.')
 flags.DEFINE_integer('opponent_checkpoint', 10, 'Interval steps to save policy as a new opponent.')
 
-flags.DEFINE_string('logdir', '/mnt/s3/logs',
+flags.DEFINE_string('logdir', '/s3/logs',
                     'Shared directory where to write train logs.')
 flags.DEFINE_string('summary_logdir', '/tmp/logs',
                     'Directory where to write summary logs.')
-flags.DEFINE_string('opponent_pool', '/mnt/opponents',
+flags.DEFINE_string('opponent_pool', '/s3/opponents',
                     'Shared directory where to save trained policy weights for opponent')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
