@@ -80,7 +80,7 @@ RUN  mkdir /root/.aws
 COPY credentials /root/.aws/credentials
 
 # Force checkout by update
-RUN echo "2017-03-21 18:05:00"
+RUN echo "2017-03-27 09:09:00"
 
 # Checkout repository 
 RUN git clone https://github.com/hiropppe/RocAlphaGo.git && \
@@ -101,3 +101,5 @@ COPY run_worker.sh /
 COPY run_worker_for_init.sh /
 
 RUN mkdir /tmp/logs
+
+WORKDIR /root/RocAlphaGo

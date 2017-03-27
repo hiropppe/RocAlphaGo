@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import concurrent.futures
 import glob
 import json
 import numpy as np
@@ -13,10 +12,11 @@ import traceback
 import tensorflow as tf
 
 import AlphaGo.go as go
+import AlphaGo.util as util
 
 from AlphaGo.ai import ProbabilisticPolicyPlayer
 from AlphaGo.util import flatten_idx
-from AlphaGo.models import policy, tf_policy
+from AlphaGo.models import tf_policy
 
 # input flags
 flags = tf.app.flags
@@ -37,7 +37,7 @@ flags.DEFINE_float('gpu_memory_fraction', 0.15,
 flags.DEFINE_boolean('log_device_placement', False, '')
 
 flags.DEFINE_integer('checkpoint', 5, 'Interval steps to execute checkpoint.')
-flags.DEFINE_integer('opponent_checkpoint', 10, 'Interval steps to save policy as a new opponent.')
+flags.DEFINE_integer('opponent_checkpoint', 500, 'Interval steps to save policy as a new opponent.')
 
 flags.DEFINE_string('logdir', '/s3/logs',
                     'Shared directory where to write train logs.')
@@ -45,10 +45,14 @@ flags.DEFINE_string('summary_logdir', '/tmp/logs',
                     'Directory where to write summary logs.')
 flags.DEFINE_string('opponent_pool', '/s3/opponents',
                     'Shared directory where to save trained policy weights for opponent')
+flags.DEFINE_string('sgf_logdir', '/s3/sgf',
+                    'Shared directory where to write sgf files of playout.')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
 
-flags.DEFINE_boolean('resume', False, '')
+flags.DEFINE_boolean('save_sgf', True,
+                     'Save game state in sgf format.')
+
 flags.DEFINE_boolean('verbose', True, '')
 
 FLAGS = flags.FLAGS
@@ -153,6 +157,24 @@ def playout(step, num_games, value=zero_baseline):
 
     learner.policy.close_session()
     opponent.policy.close_session()
+
+    if FLAGS.save_sgf:
+        sgf_path = os.path.join(FLAGS.sgf_logdir, str(FLAGS.task_index))
+        if not os.path.exists(sgf_path):
+            os.mkdir(sgf_path)
+
+        for game_idx, (state, color) in enumerate(zip(states, learner_color)):
+            color_name = 'B' if color == go.BLACK else 'W'
+            if state.get_winner() == color:
+                result = 'win'
+            elif state.get_winner() == -color:
+                result = 'lose'
+            else:
+                result = 'tie'
+            sgf_name = '_'.join([str(step).rjust(5, '0'),
+                                 os.path.basename(opponent_policy_logdir).rjust(5, '0'),
+                                 str(game_idx), color_name, result]) + '.sgf'
+            util.save_gamestate_to_sgf(state, sgf_path, sgf_name)
 
     return float(wins) / num_games, state_batch, action_batch, reward_batch
 
@@ -285,6 +307,8 @@ def run_training(policy, cluster, server, num_workers):
         loss_op = policy.loss(probs_op, actionsholder, rewardsholder)
         acc_op = policy.accuracy(probs_op, actionsholder)
 
+        mean_reward_op = tf.reduce_mean(rewardsholder)
+
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
@@ -295,25 +319,25 @@ def run_training(policy, cluster, server, num_workers):
                                                         replica_id=FLAGS.task_index,
                                                         total_num_replicas=num_workers,
                                                         use_locking=True)
-                """
-                grads = rep_op.compute_gradients(loss_op)
-                mean_reward = tf.reduce_mean(rewardsholder)
-                for i, (grad, var) in enumerate(grads):
+
+                grads_op = rep_op.compute_gradients(loss_op)
+                for i, (grad, var) in enumerate(grads_op):
                     if grad is not None:
-                        grads[i] = (tf.mul(grad, mean_reward), var)
-                train_op = rep_op.apply_gradients(grads, global_step=global_step)
-                """
-                train_op = rep_op.minimize(loss_op, global_step=global_step)
+                        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
+                train_op = rep_op.apply_gradients(grads_op, global_step=global_step)
+                # train_op = rep_op.minimize(loss_op, global_step=global_step)
             else:
-                """
-                grads = grad_op.compute_gradients(loss_op)
-                mean_reward = tf.reduce_mean(rewardsholder)
-                for i, (grad, var) in enumerate(grads):
+                grads_op = grad_op.compute_gradients(loss_op)
+                for i, (grad, var) in enumerate(grads_op):
                     if grad is not None:
-                        grads[i] = (tf.mul(grad, mean_reward), var)
-                train_op = grad_op.apply_gradients(grads, global_step=global_step)
-                """
-                train_op = grad_op.minimize(loss_op, global_step=global_step)
+                        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
+                train_op = grad_op.apply_gradients(grads_op, global_step=global_step)
+                # train_op = grad_op.minimize(loss_op, global_step=global_step)
+
+        for grad, var in grads_op:
+            tf.summary.histogram(var.name, var)
+            if grad is not None:
+                tf.summary.histogram(var.name + '/gradients', grad)
 
         if FLAGS.sync:
             init_token_op = rep_op.get_init_tokens_op()
@@ -322,7 +346,7 @@ def run_training(policy, cluster, server, num_workers):
         # create a summary for our cost and accuracy
         tf.summary.scalar("loss", loss_op)
         tf.summary.scalar("accuracy", acc_op)
-        # tf.summary.scalar("mean_reward", mean_reward)
+        tf.summary.scalar("mean_reward_op", mean_reward_op)
 
         # merge all summaries into a single "operation" which we can execute in a session
         summary_op = tf.summary.merge_all()
@@ -359,8 +383,8 @@ def run_training(policy, cluster, server, num_workers):
             (win_ratio, states, actions, rewards) = get_game_batch(step)
 
             # perform the operations we defined earlier on batch
-            _, loss, acc, summary, step = sess.run(
-                [train_op, loss_op, acc_op, summary_op, global_step],
+            _, loss, acc, mean_reward, summary, step = sess.run(
+                [train_op, loss_op, acc_op, mean_reward_op, summary_op, global_step],
                 feed_dict={
                     statesholder: states,
                     actionsholder: actions,
@@ -370,6 +394,7 @@ def run_training(policy, cluster, server, num_workers):
             elapsed_time = time.time() - start_time
             print("[Step {:d}]".format(step) +
                   " Loss: {:.4f},".format(loss) +
+                  " Mean reward: {:.4f},".format(mean_reward) +
                   " Accuracy: {:.4f},".format(acc) +
                   " Elapsed: {:3.2f}s".format(float(elapsed_time)))
 

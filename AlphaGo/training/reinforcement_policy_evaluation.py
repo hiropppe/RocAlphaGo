@@ -16,7 +16,7 @@ from AlphaGo.models.tf_policy import CNNPolicy
 
 # input flags
 flags = tf.app.flags
-flags.DEFINE_integer('num_games', 3, 'Number of games in batch.')
+flags.DEFINE_integer('num_games', 20, 'Number of games in batch.')
 flags.DEFINE_integer("move_limit", 500, "Maximum number of moves per game.")
 
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
@@ -25,7 +25,7 @@ flags.DEFINE_float('gpu_memory_fraction', 0.15,
 
 flags.DEFINE_string('learner', '/s3/logs',
                     'Directory where to be saved RL policy model.')
-flags.DEFINE_string('opponent', '/s3/opponents/1',
+flags.DEFINE_string('opponent', '/s3/opponents/0',
                     'Directory where to be saved opponent model.')
 flags.DEFINE_string('game_logdir', '/s3/test/games',
                     'Directory where to write game results.')
