@@ -91,9 +91,7 @@ def load_player(logdir):
     return player
 
 
-def playout(step, num_games, value=zero_baseline):
-    learner = load_player(FLAGS.logdir)
-
+def playout(step, learner, num_games, value=zero_baseline):
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
@@ -155,7 +153,6 @@ def playout(step, num_games, value=zero_baseline):
     action_batch = np.concatenate(action_batch, axis=0)
     reward_batch = np.concatenate(reward_batch)
 
-    learner.policy.close_session()
     opponent.policy.close_session()
 
     if FLAGS.save_sgf:
@@ -179,13 +176,15 @@ def playout(step, num_games, value=zero_baseline):
     return float(wins) / num_games, state_batch, action_batch, reward_batch
 
 
-def get_game_batch(step):
+def get_game_batch(step, learner):
+    if FLAGS.verbose:
+        print("Playing self match at step {:d}".format(step))
     start_time = time.time()
-    (win_ratio, states, actions, rewards) = playout(step, FLAGS.num_games)
+    (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
     elapsed_sec = time.time() - start_time
 
     if FLAGS.verbose:
-        print("[Worker Batch] {:d} games.".format(FLAGS.num_games) +
+        print("[Batch {:d}] {:d} games.".format(step, FLAGS.num_games) +
               " {:d} states.".format(states.shape[0]) +
               " {:d} moves.".format(actions.shape[0]) +
               " {:d} rewards.".format(rewards.shape[0]) +
@@ -294,7 +293,7 @@ def run_training(policy, cluster, server, num_workers):
 
         # count the number of updates
         global_step = tf.get_variable('global_step', [], tf.int32,
-                                      initializer=tf.constant_initializer(0),
+                                      initializer=tf.constant_initializer(1),
                                       trainable=False)
 
         statesholder = policy._statesholder()
@@ -361,8 +360,16 @@ def run_training(policy, cluster, server, num_workers):
                              init_op=init_op)
 
     config = tf.ConfigProto(allow_soft_placement=True)
+    print("Wait for session ...")
     with sv.managed_session(server.target, config=config) as sess:
+        print("Session initialized.")
+        # create leaner player
         policy.sess = sess
+        policy.statesholder = statesholder
+        policy.probs_op = probs_op
+        learner = ProbabilisticPolicyPlayer(policy,
+                                            FLAGS.policy_temperature,
+                                            move_limit=FLAGS.move_limit)
 
         if is_chief:
             summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)
@@ -376,9 +383,7 @@ def run_training(policy, cluster, server, num_workers):
         opponents = len(glob.glob(os.path.join(FLAGS.opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
-
-            (win_ratio, states, actions, rewards) = get_game_batch(step)
-
+            (win_ratio, states, actions, rewards) = get_game_batch(step, learner)
             # perform the operations we defined earlier on batch
             _, loss, acc, mean_reward, summary, step = sess.run(
                 [train_op, loss_op, acc_op, mean_reward_op, summary_op, global_step],
