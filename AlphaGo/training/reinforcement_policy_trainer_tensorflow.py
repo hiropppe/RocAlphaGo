@@ -245,9 +245,8 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
         actionsholder = policy._actionsholder()
         rewardsholder = policy._rewardsholder()
 
-        probs_op = policy.inference(statesholder, weight_setter=weight_setter)
-        loss_op = policy.loss(probs_op, actionsholder, rewardsholder)
-        policy.accuracy(probs_op, actionsholder)
+        logits_op = policy.inference(statesholder, weight_setter=weight_setter)
+        loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
 
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
@@ -263,7 +262,6 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
         init_token_op = rep_op.get_init_tokens_op()
         chief_queue_runner = rep_op.get_chief_queue_runner()
 
-        # create a summary for our cost and accuracy
         init_op = tf.global_variables_initializer()
         print("Variables initialized ...")
 
@@ -303,8 +301,9 @@ def run_training(policy, cluster, server, num_workers):
         actionsholder = policy._actionsholder()
         rewardsholder = policy._rewardsholder()
 
-        probs_op = policy.inference(statesholder)
-        loss_op = policy.loss(probs_op, actionsholder, rewardsholder)
+        logits_op = policy.inference(statesholder)
+        probs_op = policy.probs(logits_op)
+        loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
         acc_op = policy.accuracy(probs_op, actionsholder)
 
         mean_reward_op = tf.reduce_mean(rewardsholder)
@@ -364,8 +363,6 @@ def run_training(policy, cluster, server, num_workers):
     config = tf.ConfigProto(allow_soft_placement=True)
     with sv.managed_session(server.target, config=config) as sess:
         policy.sess = sess
-        policy.probs = probs_op
-        policy.statesholder = statesholder
 
         if is_chief:
             summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)

@@ -42,22 +42,24 @@ class CNNPolicy:
         self.checkpoint_dir = checkpoint_dir
 
         self.sess = None
-        self.probs = None
+        self.logits_op = None
+        self.probs_op = None
         self.statesholder = None
 
     def init_graph(self, weight_setter=None, train=False, learning_rate=1e-03):
         # initialize computation graph
-        self.g = tf.Graph()	
+        self.g = tf.Graph()
         with self.g.as_default():
             self.statesholder = self._statesholder()
             self.actionsholder = self._actionsholder()
             self.rewardsholder = self._rewardsholder()
 
-            self.probs = self.inference(self.statesholder, weight_setter)
+            self.logits_op = self.inference(self.statesholder, weight_setter)
+            self.probs_op = self.probs(self.logits_op)
 
             if train:
-                self.accuracy_op = self.accuracy(self.probs, self.actionsholder)
-                self.loss_op = self.loss(self.probs, self.actionsholder, self.rewardsholder)
+                self.accuracy_op = self.accuracy(self.probs_op, self.actionsholder)
+                self.loss_op = self.loss(self.logits_op, self.actionsholder, self.rewardsholder)
                 self.train_op = self.train(self.loss_op, learning_rate)
 
             self.saver = tf.train.Saver()
@@ -122,7 +124,7 @@ class CNNPolicy:
 
     def forward(self, states):
         states = self.reordering_states_tensor(states)
-        return self.sess.run(self.probs,
+        return self.sess.run(self.probs_op,
                              feed_dict={self.statesholder: states})
 
     def run_train(self, step, states, actions, rewards):
@@ -219,22 +221,35 @@ class CNNPolicy:
         with tf.variable_scope('bias_1') as scope:
             bias = weight_setter(14, 'b', scope.name)
             flatten = tf.reshape(conv13, [-1, self.bsize**2])
-            linear = tf.add(flatten, bias, name=scope.name)
+            logits = tf.add(flatten, bias, name=scope.name)
 
         # softmax
-        with tf.variable_scope('softmax') as scope:
-            logits = tf.nn.softmax(linear)
+        # with tf.variable_scope('softmax') as scope:
+        #     logits_op = tf.nn.softmax(linear)
 
         return logits
 
-    def loss(self, probs, actionsholder, rewardsholder):
+    def probs(self, logits):
+        # softmax
+        with tf.variable_scope('softmax') as scope:
+            probs = tf.nn.softmax(logits, name=scope.name)
+        return probs
+
+    def loss(self, logits, actionsholder, rewardsholder):
         with tf.variable_scope('loss') as scope:
-            clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
-            good_probs = tf.reduce_sum(tf.multiply(clip_probs, actionsholder), axis=[1])
-            loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
+            loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+                                  logits, actionsholder))
+            # loss = tf.multiply(loss, tf.reduce_mean(rewardsholder))
+            # loss = tf.neg(tf.multiply(loss, tf.reduce_mean(rewardsholder)), name=scope.name)
+
+            # clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
+            # good_probs = tf.reduce_sum(tf.multiply(clip_probs, actionsholder), axis=[1])
+
+            # loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
             # loss = tf.reduce_mean(tf.log(good_probs), name=scope.name)
 
             # eligibility = tf.multiply(tf.log(good_probs), rewardsholder)
+            
             # loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
             # loss = tf.reduce_mean(eligibility, name=scope.name)
         return loss
