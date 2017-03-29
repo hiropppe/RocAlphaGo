@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import datetime
 import glob
 import json
 import numpy as np
@@ -37,16 +38,13 @@ flags.DEFINE_float('gpu_memory_fraction', 0.15,
 flags.DEFINE_boolean('log_device_placement', False, '')
 
 flags.DEFINE_integer('checkpoint', 5, 'Interval steps to execute checkpoint.')
-flags.DEFINE_integer('opponent_checkpoint', 500, 'Interval steps to save policy as a new opponent.')
+flags.DEFINE_integer('opponent_checkpoint', 500, 'Interval steps to save polic in.')
+flags.DEFINE_integer('worker_checkin_timeout', 60*3, 'Timeout for worker checkin.')
 
-flags.DEFINE_string('logdir', '/s3/logs',
+flags.DEFINE_string('sharedir', '/s3',
                     'Shared directory where to write train logs.')
 flags.DEFINE_string('summary_logdir', '/tmp/logs',
                     'Directory where to write summary logs.')
-flags.DEFINE_string('opponent_pool', '/s3/opponents',
-                    'Shared directory where to save trained policy weights for opponent')
-flags.DEFINE_string('sgf_logdir', '/s3/sgf',
-                    'Shared directory where to write sgf files of playout.')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
 
@@ -56,6 +54,12 @@ flags.DEFINE_boolean('save_sgf', True,
 flags.DEFINE_boolean('verbose', True, '')
 
 FLAGS = flags.FLAGS
+
+# Define concrete working directory
+logdir = os.path.join(FLAGS.sharedir, 'logs')  # Save checkpoint files.
+opponent_pool = os.path.join(FLAGS.sharedir, 'opponents')  # Opponent weight pool.
+sgf_logdir = os.path.join(FLAGS.sharedir, 'sgf')  # Save sgf files of training playout.
+checkin_dir = os.path.join(FLAGS.sharedir, 'checkin')
 
 
 def zero_baseline(state):
@@ -92,7 +96,7 @@ def load_player(logdir):
 
 
 def playout(step, learner, num_games, value=zero_baseline):
-    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
+    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
     opponent = load_player(opponent_policy_logdir)
@@ -156,7 +160,7 @@ def playout(step, learner, num_games, value=zero_baseline):
     opponent.policy.close_session()
 
     if FLAGS.save_sgf:
-        sgf_path = os.path.join(FLAGS.sgf_logdir, str(FLAGS.task_index))
+        sgf_path = os.path.join(sgf_logdir, str(FLAGS.task_index))
         if not os.path.exists(sgf_path):
             os.mkdir(sgf_path)
 
@@ -228,6 +232,38 @@ def init_keras_weight_setter():
     return keras_weight
 
 
+def wait_for_all_worker_checking_in(num_workers):
+    # Workaround. some worker's session is not initialized.
+    # write self check in file then wait for checking in all workers
+    # worker that is not checked in requires reboot or else ... 
+    worker_checkin_dir = os.path.join(checkin_dir, FLAGS.job_name)
+    if not os.path.exists(worker_checkin_dir):
+        os.mkdir(worker_checkin_dir)
+    worker_checkin_file = os.path.join(worker_checkin_dir, 'worker' + str(FLAGS.task_index))
+    if os.path.exists(worker_checkin_file):
+        os.remove(worker_checkin_file)
+    with open(worker_checkin_file, 'w') as checkin:
+        checkin.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%s'))
+
+    while True:
+        exists_all = all(os.path.exists(os.path.join(worker_checkin_dir, 'worker' + str(task_index)))
+                         for task_index in range(num_workers))
+        if exists_all:
+            ps_checkin_file = os.path.join(checkin_dir, 'ps', 'ps0')
+            ps_checkin_mtime = os.stat(ps_checkin_file).st_mtime
+            running_all = all(ps_checkin_mtime <= os.stat(os.path.join(worker_checkin_dir, 'worker' + str(task_index))).st_mtime
+                              for task_index in range(num_workers))
+            if running_all:
+                print("All worker checked in.")
+                break
+            else:
+                print("Some worker timestamp is not updated.")
+        else:
+            print("Missing some worker")
+        print("Wait for all worker checking in.")
+        time.sleep(10)
+
+
 def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
     weight_setter = init_keras_weight_setter()
     # Between-graph replication
@@ -258,31 +294,25 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
 
             rep_op.minimize(loss_op, global_step=global_step)
 
-        init_token_op = rep_op.get_init_tokens_op()
-        chief_queue_runner = rep_op.get_chief_queue_runner()
-
         init_op = tf.global_variables_initializer()
         print("Variables initialized ...")
 
     is_chief = FLAGS.task_index == 0
     sv = tf.train.Supervisor(is_chief=is_chief,
-                             logdir=FLAGS.logdir,
+                             logdir=logdir,
                              global_step=global_step,
                              summary_op=None,
                              saver=tf.train.Saver(),
                              init_op=init_op)
 
     config = tf.ConfigProto(allow_soft_placement=True)
-    with sv.managed_session(server.target, config=config) as sess:
-        if is_chief:
-            sv.start_queue_runners(sess, [chief_queue_runner])
-            sess.run(init_token_op)
-            sv.saver.save(sess, sv.save_path, global_step=0)
+    print("Wait for session ...")
+    with sv.managed_session(server.target, config=config):
+        print("Session initialized.")
 
-    if is_chief:
-        sv.request_stop()
-    else:
-        sv.stop()
+        wait_for_all_worker_checking_in(num_workers)
+
+    sv.stop()
 
 
 def run_training(policy, cluster, server, num_workers):
@@ -310,7 +340,6 @@ def run_training(policy, cluster, server, num_workers):
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
-
             if FLAGS.sync:
                 rep_op = tf.train.SyncReplicasOptimizer(grad_op,
                                                         replicas_to_aggregate=num_workers,
@@ -353,7 +382,7 @@ def run_training(policy, cluster, server, num_workers):
 
     is_chief = FLAGS.task_index == 0
     sv = tf.train.Supervisor(is_chief=is_chief,
-                             logdir=FLAGS.logdir,
+                             logdir=logdir,
                              global_step=global_step,
                              summary_op=None,
                              saver=tf.train.Saver(max_to_keep=0),
@@ -363,6 +392,9 @@ def run_training(policy, cluster, server, num_workers):
     print("Wait for session ...")
     with sv.managed_session(server.target, config=config) as sess:
         print("Session initialized.")
+
+        wait_for_all_worker_checking_in(num_workers)
+
         # create leaner player
         policy.sess = sess
         policy.statesholder = statesholder
@@ -380,7 +412,7 @@ def run_training(policy, cluster, server, num_workers):
         # perform training cycles
         step = 0
         reports = 0
-        opponents = len(glob.glob(os.path.join(FLAGS.opponent_pool, '*'))) - 1
+        opponents = len(glob.glob(os.path.join(opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
             start_time = time.time()
             (win_ratio, states, actions, rewards) = get_game_batch(step, learner)
@@ -414,13 +446,13 @@ def run_training(policy, cluster, server, num_workers):
                     if step >= FLAGS.opponent_checkpoint * (opponents+1):
                         print("Update opponent pool at step {:d}.").format(step)
                         opponents += 1
-                        meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-*.meta'))]
+                        meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(logdir, 'model.ckpt-*.meta'))]
                         opponent_step = max(int(re.findall(r'model\.ckpt\-(\d+)\.meta', f)[0]) for f in meta_files)
-                        new_opponent_path = os.path.join(FLAGS.opponent_pool, str(opponent_step))
+                        new_opponent_path = os.path.join(opponent_pool, str(opponent_step))
                         os.mkdir(new_opponent_path)
-                        for src in glob.glob(os.path.join(FLAGS.logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
+                        for src in glob.glob(os.path.join(logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
                             shutil.copy2(src, new_opponent_path)
-                        shutil.copy2(os.path.join(FLAGS.logdir, 'checkpoint'), new_opponent_path)
+                        shutil.copy2(os.path.join(logdir, 'checkpoint'), new_opponent_path)
                 except:
                     err, msg, _ = sys.exc_info()
                     sys.stderr.write("{} {}\n".format(err, msg))
@@ -448,8 +480,19 @@ def main(argv=None):
                              job_name=FLAGS.job_name,
                              task_index=FLAGS.task_index)
 
-    learner_policy = tf_policy.CNNPolicy(checkpoint_dir=FLAGS.logdir)
+    learner_policy = tf_policy.CNNPolicy(checkpoint_dir=logdir)
     if FLAGS.job_name == 'ps':
+        # Workaround. check in for worker management
+        ps_checkin_dir = os.path.join(checkin_dir, FLAGS.job_name)
+        if not os.path.exists(ps_checkin_dir):
+            os.mkdir(ps_checkin_dir)
+        ps_checkin_file = os.path.join(ps_checkin_dir, 'ps' + str(FLAGS.task_index))
+        if os.path.exists(ps_checkin_file):
+            os.remove(ps_checkin_file)
+        with open(ps_checkin_file, 'w') as checkin:
+            checkin.write(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%s'))
+        print('Checked in.')
+
         server.join()
     elif FLAGS.job_name == 'worker':
         if FLAGS.keras_weights:
