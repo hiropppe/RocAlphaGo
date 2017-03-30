@@ -23,11 +23,20 @@ if __name__ == '__main__':
         reboot worker container which is not initialized.
     """
     docker_ps = subprocess.Popen("docker ps | grep 'worker'", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    worker_lines = docker_ps.stdout.read().split('\n')[:-1]
+    worker_lines = docker_ps.stdout.read()
+    if isinstance(worker_lines, bytes):
+        worker_lines = worker_lines.decode("utf-8")
+    worker_lines = worker_lines.split('\n')[:-1]
     workers = [worker.split()[-1] for worker in worker_lines]
 
     start_time = time.time()
     while True:
+        ps_checkin_file = os.path.join(checkin_dir, 'ps', 'ps0')
+        if os.path.exists(ps_checkin_file):
+            ps_checkin_mtime = os.stat(ps_checkin_file).st_mtime
+        else:
+            print('Parameter server has not checked in yet.')
+            continue
         worker_checkin_dir = os.path.join(checkin_dir, 'worker')
         exists_all = all(os.path.exists(os.path.join(worker_checkin_dir, worker)) for worker in workers)
         if exists_all:
