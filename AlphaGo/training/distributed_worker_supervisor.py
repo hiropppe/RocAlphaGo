@@ -8,7 +8,7 @@ import tensorflow as tf
 flags = tf.app.flags
 flags.DEFINE_string('sharedir', '/s3',
                     'Shared directory for distributed training.')
-flags.DEFINE_integer('checkin_timeout', 60*3,
+flags.DEFINE_integer('checkin_timeout', 60*2,
                      'Restart container if given timeout exceeded.')
 flags.DEFINE_integer('check_interval', 10,
                      'Worker state check interval in sec.')
