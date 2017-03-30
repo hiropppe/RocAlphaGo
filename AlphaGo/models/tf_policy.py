@@ -238,20 +238,14 @@ class CNNPolicy:
     def loss(self, logits, actionsholder, rewardsholder):
         with tf.variable_scope('loss') as scope:
             loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-                                  logits, actionsholder))
-            # loss = tf.multiply(loss, tf.reduce_mean(rewardsholder))
-            # loss = tf.neg(tf.multiply(loss, tf.reduce_mean(rewardsholder)), name=scope.name)
+                                  logits, actionsholder), name=scope.name)
 
-            # clip_probs = tf.clip_by_value(probs, 1e-07, 1.0)
-            # good_probs = tf.reduce_sum(tf.multiply(clip_probs, actionsholder), axis=[1])
+            # probs = tf.nn.softmax(logits)
+            # probs = tf.clip_by_value(probs, 1e-07, 1.0)
 
-            # loss = tf.neg(tf.reduce_mean(tf.log(good_probs)), name=scope.name)
-            # loss = tf.reduce_mean(tf.log(good_probs), name=scope.name)
+            # loss = tf.reduce_mean(-tf.reduce_sum(actionsholder * tf.log(probs), axis=[1]), name=scope.name)
+            # loss = tf.reduce_mean(-tf.reduce_sum(actionsholder * tf.log(probs), axis=[1]) * rewardsholder, name=scope.name)
 
-            # eligibility = tf.multiply(tf.log(good_probs), rewardsholder)
-            
-            # loss = tf.neg(tf.reduce_mean(eligibility), name=scope.name)
-            # loss = tf.reduce_mean(eligibility, name=scope.name)
         return loss
 
     def accuracy(self, probs, actionsholder):
