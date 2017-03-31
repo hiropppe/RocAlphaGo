@@ -237,14 +237,14 @@ class CNNPolicy:
 
     def loss(self, logits, actionsholder, rewardsholder):
         with tf.variable_scope('loss') as scope:
-            loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-                                  logits, actionsholder), name=scope.name)
+            # loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+            #                       logits, actionsholder), name=scope.name)
 
-            # probs = tf.nn.softmax(logits)
-            # probs = tf.clip_by_value(probs, 1e-07, 1.0)
+            probs = tf.nn.softmax(logits)
+            probs = tf.clip_by_value(probs, 1e-07, 1.0)
 
             # loss = tf.reduce_mean(-tf.reduce_sum(actionsholder * tf.log(probs), axis=[1]), name=scope.name)
-            # loss = tf.reduce_mean(-tf.reduce_sum(actionsholder * tf.log(probs), axis=[1]) * rewardsholder, name=scope.name)
+            loss = tf.reduce_mean(-tf.reduce_sum(actionsholder * tf.log(probs), axis=[1]) * rewardsholder, name=scope.name)
 
         return loss
 

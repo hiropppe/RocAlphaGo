@@ -30,8 +30,12 @@ flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
 flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
 flags.DEFINE_integer('num_playout_cpu', 1, 'Number of cpu for playout.')
 flags.DEFINE_integer("move_limit", 500, "Maximum number of moves per game.")
+flags.DEFINE_boolean('greedy_leaner', False, '')
+flags.DEFINE_integer('greedy_start', 100, 'Interval steps to execute checkpoint.')
+flags.DEFINE_boolean('save_sgf', True,
+                     'Save game state in sgf format.')
 
-flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate.')
+flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
@@ -43,13 +47,10 @@ flags.DEFINE_integer('worker_checkin_timeout', 60*3, 'Timeout for worker checkin
 
 flags.DEFINE_string('sharedir', '/s3',
                     'Shared directory where to write train logs.')
-flags.DEFINE_string('summary_logdir', '/tmp/logs',
-                    'Directory where to write summary logs.')
+flags.DEFINE_string('local_logdir', '/tmp/logs',
+                    'Directory where to save latest parameters for playout.')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
-
-flags.DEFINE_boolean('save_sgf', True,
-                     'Save game state in sgf format.')
 
 flags.DEFINE_boolean('verbose', True, '')
 
@@ -57,6 +58,7 @@ FLAGS = flags.FLAGS
 
 # Define concrete working directory
 logdir = os.path.join(FLAGS.sharedir, 'logs')  # Save checkpoint files.
+summary_logdir = os.path.join(FLAGS.sharedir, 'summary')  # Save summary logs.
 opponent_pool = os.path.join(FLAGS.sharedir, 'opponents')  # Opponent weight pool.
 sgf_logdir = os.path.join(FLAGS.sharedir, 'sgf')  # Save sgf files of training playout.
 checkin_dir = os.path.join(FLAGS.sharedir, 'checkin')
@@ -66,7 +68,7 @@ def zero_baseline(state):
     return 0
 
 
-def load_player(logdir):
+def init_player(logdir, restore_checkpoint=False, greedy=False):
     # See as migrated Keras weights if model.json exists.
     if os.path.exists(os.path.join(logdir, 'model.json')):
         # Get filter size from json
@@ -87,11 +89,17 @@ def load_player(logdir):
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
                             device_count={'GPU': 1})
     policy_net.start_session(config)
-    policy_net.load_model()
+    if restore_checkpoint:
+        policy_net.load_model()
 
-    player = ProbabilisticPolicyPlayer(policy_net,
-                                       FLAGS.policy_temperature,
-                                       move_limit=FLAGS.move_limit)
+    if greedy:
+        player = GreedyPolicyPlayer(policy_net,
+                                    move_limit=FLAGS.move_limit)
+    else:
+        player = ProbabilisticPolicyPlayer(policy_net,
+                                           FLAGS.policy_temperature,
+                                           move_limit=FLAGS.move_limit,
+                                           greedy_start=FLAGS.greedy_start)
     return player
 
 
@@ -99,7 +107,11 @@ def playout(step, learner, num_games, value=zero_baseline):
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
-    opponent = load_player(opponent_policy_logdir)
+
+    opponent = init_player(opponent_policy_logdir, restore_checkpoint=True)
+
+    # restore latest checkpoint
+    learner.policy.load_model()
 
     board_size = learner.policy.bsize
     states = [go.GameState(size=board_size) for _ in range(num_games)]
@@ -183,8 +195,16 @@ def playout(step, learner, num_games, value=zero_baseline):
 def get_game_batch(step, learner):
     if FLAGS.verbose:
         print("Playing self match at step {:d}".format(step))
+
     start_time = time.time()
-    (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
+    succeed = True
+    try:
+        (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
+    except:
+        succeed = False
+        err, msg, _ = sys.exc_info()
+        sys.stderr.write("{} {}\n".format(err, msg))
+        sys.stderr.write(traceback.format_exc())
     elapsed_sec = time.time() - start_time
 
     if FLAGS.verbose:
@@ -195,7 +215,7 @@ def get_game_batch(step, learner):
               " {:.2f}% win.".format(100*win_ratio) +
               " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
 
-    return win_ratio, states, actions, rewards
+    return succeed, win_ratio, states, actions, rewards
 
 
 def _make_training_pair(st, mv, preprocessor):
@@ -264,8 +284,9 @@ def wait_for_all_worker_checking_in(num_workers):
         time.sleep(10)
 
 
-def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
-    weight_setter = init_keras_weight_setter()
+def init_checkpoint_with_keras_weights(cluster, server, num_workers):
+    policy = tf_policy.CNNPolicy()
+
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
                    worker_device="/job:worker/task:{:d}".format(FLAGS.task_index),
@@ -280,7 +301,8 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
         actionsholder = policy._actionsholder()
         rewardsholder = policy._rewardsholder()
 
-        logits_op = policy.inference(statesholder, weight_setter=weight_setter)
+        logits_op = policy.inference(statesholder,
+                                     weight_setter=init_keras_weight_setter())
         loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
 
         # specify replicas optimizer
@@ -315,7 +337,10 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
     sv.stop()
 
 
-def run_training(policy, cluster, server, num_workers):
+def run_training(cluster, server, num_workers):
+    learner = init_player(FLAGS.local_logdir, greedy=True)
+    policy = learner.policy
+
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
                    worker_device="/job:worker/task:{:d}".format(FLAGS.task_index),
@@ -398,38 +423,22 @@ def run_training(policy, cluster, server, num_workers):
 
                 grads_and_vars = zip(batch_grad, tvars)
                 update_grads_op = rep_op.apply_gradients(grads_and_vars, global_step=global_step)
-
-                """
-                grads_op = rep_op.compute_gradients(loss_op)
-                for i, (grad, var) in enumerate(grads_op):
-                    if grad is not None:
-                        grads_op[i] = (tf.mul(grad, rewardsholder), var)
-                train_op = rep_op.apply_gradients(grads_op, global_step=global_step)
-                """
-                # train_op = rep_op.minimize(loss_op, global_step=global_step)
             else:
                 grads_and_vars = zip(batch_grad, tvars)
                 update_grads_op = rep_op.apply_gradients(grads_and_vars, global_step=global_step)
 
-                """
-                grads_op = grad_op.compute_gradients(loss_op)
-                for i, (grad, var) in enumerate(grads_op):
-                    if grad is not None:
-                        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
-                train_op = grad_op.apply_gradients(grads_op, global_step=global_step)
-                """
-                # train_op = grad_op.minimize(loss_op, global_step=global_step)
-
-        """
-        for grad, var in grads_op:
+        for grad, var in grads_and_vars:
             tf.summary.histogram(var.name, var)
             if grad is not None:
                 tf.summary.histogram(var.name + '/gradients', grad)
-        """
 
         if FLAGS.sync:
             init_token_op = rep_op.get_init_tokens_op()
             chief_queue_runner = rep_op.get_chief_queue_runner()
+
+        # workaround. remote session is too slow to playout.
+        # save latest parameter to local disk then load parameter in local session.
+        local_saver = tf.train.Saver()
 
         # create a summary for our cost and accuracy
         tf.summary.scalar("loss", loss_op)
@@ -456,14 +465,6 @@ def run_training(policy, cluster, server, num_workers):
 
         wait_for_all_worker_checking_in(num_workers)
 
-        # create leaner player
-        policy.sess = sess
-        policy.statesholder = statesholder
-        policy.probs_op = probs_op
-        learner = ProbabilisticPolicyPlayer(policy,
-                                            FLAGS.policy_temperature,
-                                            move_limit=FLAGS.move_limit)
-
         if is_chief:
             summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)
             if FLAGS.sync:
@@ -479,9 +480,20 @@ def run_training(policy, cluster, server, num_workers):
         reports = 0
         opponents = len(glob.glob(os.path.join(opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
+            # workaround. remote session is too slow to playout.
+            # save latest parameter to local disk then load parameter in local session.
+            print("workaround. Save latest parameter" +
+                  " to {:s} to execute playout.".format(FLAGS.local_logdir))
+            local_saver.save(sess, os.path.join(FLAGS.local_logdir, 'model.ckpt'), global_step=0)
+            print("Saved successfully.")
+
             start_time = time.time()
 
-            (win_ratio, states, actions, rewards) = get_game_batch(step, learner)
+            (succeed, win_ratio, states, actions, rewards) = get_game_batch(step, learner)
+
+            # Retry if playout failed unexpectedly.
+            if not succeed:
+                continue
 
             for i, state in enumerate(states):
                 grads = sess.run(grads_op, feed_dict={
@@ -578,7 +590,6 @@ def main(argv=None):
                              job_name=FLAGS.job_name,
                              task_index=FLAGS.task_index)
 
-    learner_policy = tf_policy.CNNPolicy(checkpoint_dir=logdir)
     if FLAGS.job_name == 'ps':
         # Workaround. check in for worker management
         ps_checkin_dir = os.path.join(checkin_dir, FLAGS.job_name)
@@ -594,9 +605,9 @@ def main(argv=None):
         server.join()
     elif FLAGS.job_name == 'worker':
         if FLAGS.keras_weights:
-            init_checkpoint_with_keras_weights(learner_policy, cluster, server, num_workers)
+            init_checkpoint_with_keras_weights(cluster, server, num_workers)
         else:
-            run_training(learner_policy, cluster, server, num_workers)
+            run_training(cluster, server, num_workers)
 
 
 if __name__ == '__main__':

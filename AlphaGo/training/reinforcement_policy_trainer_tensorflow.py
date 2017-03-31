@@ -35,7 +35,7 @@ flags.DEFINE_integer('greedy_start', 100, '')
 flags.DEFINE_boolean('save_sgf', True,
                      'Save game state in sgf format.')
 
-flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
+flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
 flags.DEFINE_float('gpu_memory_fraction', 0.15,
                    'config.per_process_gpu_memory_fraction for training session')
@@ -195,7 +195,6 @@ def get_game_batch(step, learner):
         print("Playing self match at step {:d}".format(step))
 
     start_time = time.time()
-    succeed = True
     try:
         (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
         elapsed_sec = time.time() - start_time
@@ -208,12 +207,12 @@ def get_game_batch(step, learner):
                   " {:.2f}% win.".format(100*win_ratio) +
                   " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
     except:
-        succeed, win_ratio, states, actions, rewards = False, None, None, None, None
         err, msg, _ = sys.exc_info()
         sys.stderr.write("{} {}\n".format(err, msg))
         sys.stderr.write(traceback.format_exc())
+        return False, None, None, None, None
 
-    return succeed, win_ratio, states, actions, rewards
+    return True, win_ratio, states[:100], actions[:100], rewards[:100]
 
 
 def _make_training_pair(st, mv, preprocessor):
@@ -365,24 +364,24 @@ def run_training(policy, cluster, server, num_workers):
                                                         total_num_replicas=num_workers,
                                                         use_locking=True)
 
-                grads_op = rep_op.compute_gradients(loss_op)
-                for i, (grad, var) in enumerate(grads_op):
-                    if grad is not None:
-                        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
-                train_op = rep_op.apply_gradients(grads_op, global_step=global_step)
-                # train_op = rep_op.minimize(loss_op, global_step=global_step)
+                #grads_op = rep_op.compute_gradients(loss_op)
+                #for i, (grad, var) in enumerate(grads_op):
+                #    if grad is not None:
+                #        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
+                #train_op = rep_op.apply_gradients(grads_op, global_step=global_step)
+                train_op = rep_op.minimize(loss_op, global_step=global_step)
             else:
-                grads_op = grad_op.compute_gradients(loss_op)
-                for i, (grad, var) in enumerate(grads_op):
-                    if grad is not None:
-                        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
-                train_op = grad_op.apply_gradients(grads_op, global_step=global_step)
-                # train_op = grad_op.minimize(loss_op, global_step=global_step)
+                #grads_op = grad_op.compute_gradients(loss_op)
+                #for i, (grad, var) in enumerate(grads_op):
+                #    if grad is not None:
+                #        grads_op[i] = (tf.mul(grad, mean_reward_op), var)
+                #train_op = grad_op.apply_gradients(grads_op, global_step=global_step)
+                train_op = grad_op.minimize(loss_op, global_step=global_step)
 
-        for grad, var in grads_op:
-            tf.summary.histogram(var.name, var)
-            if grad is not None:
-                tf.summary.histogram(var.name + '/gradients', grad)
+        #for grad, var in grads_op:
+        #    tf.summary.histogram(var.name, var)
+        #    if grad is not None:
+        #        tf.summary.histogram(var.name + '/gradients', grad)
 
         if FLAGS.sync:
             init_token_op = rep_op.get_init_tokens_op()
