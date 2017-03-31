@@ -15,7 +15,7 @@ import tensorflow as tf
 import AlphaGo.go as go
 import AlphaGo.util as util
 
-from AlphaGo.ai import ProbabilisticPolicyPlayer
+from AlphaGo.ai import GreedyPolicyPlayer, ProbabilisticPolicyPlayer
 from AlphaGo.util import flatten_idx
 from AlphaGo.models import tf_policy
 
@@ -30,6 +30,10 @@ flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
 flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
 flags.DEFINE_integer('num_playout_cpu', 1, 'Number of cpu for playout.')
 flags.DEFINE_integer("move_limit", 500, "Maximum number of moves per game.")
+flags.DEFINE_boolean('greedy_leaner', False, '')
+flags.DEFINE_integer('greedy_start', 100, '')
+flags.DEFINE_boolean('save_sgf', True,
+                     'Save game state in sgf format.')
 
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
@@ -43,13 +47,10 @@ flags.DEFINE_integer('worker_checkin_timeout', 60*3, 'Timeout for worker checkin
 
 flags.DEFINE_string('sharedir', '/s3',
                     'Shared directory where to write train logs.')
-flags.DEFINE_string('summary_logdir', '/tmp/logs',
-                    'Directory where to write summary logs.')
+flags.DEFINE_string('local_logdir', '/tmp/logs',
+                    'Directory where to save latest parameters for playout.')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
-
-flags.DEFINE_boolean('save_sgf', True,
-                     'Save game state in sgf format.')
 
 flags.DEFINE_boolean('verbose', True, '')
 
@@ -57,6 +58,7 @@ FLAGS = flags.FLAGS
 
 # Define concrete working directory
 logdir = os.path.join(FLAGS.sharedir, 'logs')  # Save checkpoint files.
+summary_logdir = os.path.join(FLAGS.sharedir, 'summary')  # Save summary logs.
 opponent_pool = os.path.join(FLAGS.sharedir, 'opponents')  # Opponent weight pool.
 sgf_logdir = os.path.join(FLAGS.sharedir, 'sgf')  # Save sgf files of training playout.
 checkin_dir = os.path.join(FLAGS.sharedir, 'checkin')
@@ -66,7 +68,7 @@ def zero_baseline(state):
     return 0
 
 
-def load_player(logdir):
+def load_player(logdir, greedy=False):
     # See as migrated Keras weights if model.json exists.
     if os.path.exists(os.path.join(logdir, 'model.json')):
         # Get filter size from json
@@ -83,19 +85,26 @@ def load_player(logdir):
     else:
         policy_net = tf_policy.CNNPolicy(checkpoint_dir=logdir)
 
-    policy_net.init_graph(train=False)
+    policy_net.init_graph()
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
                             device_count={'GPU': 1})
     policy_net.start_session(config)
     policy_net.load_model()
 
-    player = ProbabilisticPolicyPlayer(policy_net,
-                                       FLAGS.policy_temperature,
-                                       move_limit=FLAGS.move_limit)
+    if greedy:
+        player = GreedyPolicyPlayer(policy_net,
+                                    move_limit=FLAGS.move_limit)
+    else:
+        player = ProbabilisticPolicyPlayer(policy_net,
+                                           FLAGS.policy_temperature,
+                                           move_limit=FLAGS.move_limit,
+                                           greedy_start=FLAGS.greedy_start)
     return player
 
 
 def playout(step, learner, num_games, value=zero_baseline):
+    learner = load_player(FLAGS.local_logdir, greedy=True)
+
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
@@ -157,6 +166,7 @@ def playout(step, learner, num_games, value=zero_baseline):
     action_batch = np.concatenate(action_batch, axis=0)
     reward_batch = np.concatenate(reward_batch)
 
+    learner.policy.close_session()
     opponent.policy.close_session()
 
     if FLAGS.save_sgf:
@@ -183,19 +193,27 @@ def playout(step, learner, num_games, value=zero_baseline):
 def get_game_batch(step, learner):
     if FLAGS.verbose:
         print("Playing self match at step {:d}".format(step))
+
     start_time = time.time()
-    (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
-    elapsed_sec = time.time() - start_time
+    succeed = True
+    try:
+        (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
+        elapsed_sec = time.time() - start_time
 
-    if FLAGS.verbose:
-        print("[Batch {:d}] {:d} games.".format(step, FLAGS.num_games) +
-              " {:d} states.".format(states.shape[0]) +
-              " {:d} moves.".format(actions.shape[0]) +
-              " {:d} rewards.".format(rewards.shape[0]) +
-              " {:.2f}% win.".format(100*win_ratio) +
-              " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
+        if FLAGS.verbose:
+            print("[Batch {:d}] {:d} games.".format(step, FLAGS.num_games) +
+                  " {:d} states.".format(states.shape[0]) +
+                  " {:d} moves.".format(actions.shape[0]) +
+                  " {:d} rewards.".format(rewards.shape[0]) +
+                  " {:.2f}% win.".format(100*win_ratio) +
+                  " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
+    except:
+        succeed, win_ratio, states, actions, rewards = False, None, None, None, None
+        err, msg, _ = sys.exc_info()
+        sys.stderr.write("{} {}\n".format(err, msg))
+        sys.stderr.write(traceback.format_exc())
 
-    return win_ratio, states, actions, rewards
+    return succeed, win_ratio, states, actions, rewards
 
 
 def _make_training_pair(st, mv, preprocessor):
@@ -370,6 +388,10 @@ def run_training(policy, cluster, server, num_workers):
             init_token_op = rep_op.get_init_tokens_op()
             chief_queue_runner = rep_op.get_chief_queue_runner()
 
+        # workaround. remote session is too slow to playout.
+        # save latest parameter to local disk then load parameter in local session.
+        local_saver = tf.train.Saver()
+
         # create a summary for our cost and accuracy
         tf.summary.scalar("loss", loss_op)
         tf.summary.scalar("accuracy", acc_op)
@@ -396,15 +418,16 @@ def run_training(policy, cluster, server, num_workers):
         wait_for_all_worker_checking_in(num_workers)
 
         # create leaner player
-        policy.sess = sess
-        policy.statesholder = statesholder
-        policy.probs_op = probs_op
-        learner = ProbabilisticPolicyPlayer(policy,
-                                            FLAGS.policy_temperature,
-                                            move_limit=FLAGS.move_limit)
+        # policy.sess = sess
+        # policy.statesholder = statesholder
+        # policy.probs_op = probs_op
+        # learner = ProbabilisticPolicyPlayer(policy,
+        #                                     FLAGS.policy_temperature,
+        #                                     move_limit=FLAGS.move_limit)
+        learner = None
 
         if is_chief:
-            summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)
+            summary_writer = tf.summary.FileWriter(summary_logdir, sess.graph)
             if FLAGS.sync:
                 sv.start_queue_runners(sess, [chief_queue_runner])
                 sess.run(init_token_op)
@@ -414,8 +437,21 @@ def run_training(policy, cluster, server, num_workers):
         reports = 0
         opponents = len(glob.glob(os.path.join(opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
+            # workaround. remote session is too slow to playout.
+            # save latest parameter to local disk then load parameter in local session.
+            print("workaround. Save latest parameter" +
+                  " to {:s} to execute playout.".format(FLAGS.local_logdir))
+            local_saver.save(sess, os.path.join(FLAGS.local_logdir, 'model.ckpt'), global_step=0)
+            print("Saved successfully.")
+
             start_time = time.time()
-            (win_ratio, states, actions, rewards) = get_game_batch(step, learner)
+
+            (succeed, win_ratio, states, actions, rewards) = get_game_batch(step, learner)
+
+            # Retry if playout failed unexpectedly.
+            if not succeed:
+                continue
+
             # perform the operations we defined earlier on batch
             _, loss, acc, mean_reward, summary, step = sess.run(
                 [train_op, loss_op, acc_op, mean_reward_op, summary_op, global_step],
