@@ -34,6 +34,7 @@ flags.DEFINE_boolean('greedy_leaner', False, '')
 flags.DEFINE_integer('greedy_start', 100, '')
 flags.DEFINE_boolean('save_sgf', True,
                      'Save game state in sgf format.')
+flags.DEFINE_integer("num_train_timestep", 100, "Maximum number of train time-step per game.")
 
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
@@ -68,7 +69,7 @@ def zero_baseline(state):
     return 0
 
 
-def load_player(logdir, greedy=False):
+def init_player(logdir, restore_checkpoint=False, greedy=False):
     # See as migrated Keras weights if model.json exists.
     if os.path.exists(os.path.join(logdir, 'model.json')):
         # Get filter size from json
@@ -89,7 +90,9 @@ def load_player(logdir, greedy=False):
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
                             device_count={'GPU': 1})
     policy_net.start_session(config)
-    policy_net.load_model()
+
+    if restore_checkpoint:
+        policy_net.load_model()
 
     if greedy:
         player = GreedyPolicyPlayer(policy_net,
@@ -103,12 +106,11 @@ def load_player(logdir, greedy=False):
 
 
 def playout(step, learner, num_games, value=zero_baseline):
-    learner = load_player(FLAGS.local_logdir, greedy=True)
-
     opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
-    opponent = load_player(opponent_policy_logdir)
+
+    opponent = init_player(opponent_policy_logdir, restore_checkpoint=True)
 
     board_size = learner.policy.bsize
     states = [go.GameState(size=board_size) for _ in range(num_games)]
@@ -150,10 +152,10 @@ def playout(step, learner, num_games, value=zero_baseline):
                 learner_won[idx] = state.get_winner() == learner_color[idx]
                 just_finished.append(idx)
 
-                state_batch.append(np.concatenate(game_states[idx], axis=0))
-                action_batch.append(np.concatenate(game_actions[idx], axis=0))
+                state_batch.append(np.concatenate(game_states[idx][:FLAGS.num_train_timestep], axis=0))
+                action_batch.append(np.concatenate(game_actions[idx][:FLAGS.num_train_timestep], axis=0))
                 z = 1 if learner_won[idx] else -1
-                reward_batch.append(np.array([z - value(state) for state in game_states[idx]]))
+                reward_batch.append(np.array([z - value(state) for state in game_states[idx][:FLAGS.num_train_timestep]]))
 
         for idx in just_finished:
             del idxs_to_unfinished_states[idx]
@@ -166,7 +168,6 @@ def playout(step, learner, num_games, value=zero_baseline):
     action_batch = np.concatenate(action_batch, axis=0)
     reward_batch = np.concatenate(reward_batch)
 
-    learner.policy.close_session()
     opponent.policy.close_session()
 
     if FLAGS.save_sgf:
@@ -281,8 +282,9 @@ def wait_for_all_worker_checking_in(num_workers):
         time.sleep(10)
 
 
-def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
-    weight_setter = init_keras_weight_setter()
+def init_checkpoint_with_keras_weights(cluster, server, num_workers):
+    policy = tf_policy.CNNPolicy()
+
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
                    worker_device="/job:worker/task:{:d}".format(FLAGS.task_index),
@@ -297,7 +299,7 @@ def init_checkpoint_with_keras_weights(policy, cluster, server, num_workers):
         actionsholder = policy._actionsholder()
         rewardsholder = policy._rewardsholder()
 
-        logits_op = policy.inference(statesholder, weight_setter=weight_setter)
+        logits_op = policy.inference(statesholder, weight_setter=init_keras_weight_setter())
         loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
 
         # specify replicas optimizer

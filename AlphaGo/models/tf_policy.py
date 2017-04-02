@@ -25,7 +25,8 @@ class CNNPolicy:
                  feature_list=DEFAULT_FEATURES,
                  bsize=19,
                  filters=192,
-                 checkpoint_dir='./logs'):
+                 checkpoint_dir='./logs',
+                 summary_logdir='./logs'):
         """create a neural net object that preprocesses according to feature_list and uses
         a neural network specified by keyword arguments (using subclass' create_network())
 
@@ -40,13 +41,14 @@ class CNNPolicy:
         self.filters = filters
 
         self.checkpoint_dir = checkpoint_dir
+        self.summary_logdir = summary_logdir
 
         self.sess = None
         self.logits_op = None
         self.probs_op = None
         self.statesholder = None
 
-    def init_graph(self, weight_setter=None, train=False, learning_rate=1e-03):
+    def init_graph(self, weight_setter=None, learning_rate=1e-03):
         # initialize computation graph
         self.g = tf.Graph()
         with self.g.as_default():
@@ -57,13 +59,27 @@ class CNNPolicy:
             self.logits_op = self.inference(self.statesholder, weight_setter)
             self.probs_op = self.probs(self.logits_op)
 
-            if train:
-                self.accuracy_op = self.accuracy(self.probs_op, self.actionsholder)
-                self.loss_op = self.loss(self.logits_op, self.actionsholder, self.rewardsholder)
-                self.train_op = self.train(self.loss_op, learning_rate)
+            self.accuracy_op = self.accuracy(self.probs_op, self.actionsholder)
+            self.loss_op = self.loss(self.logits_op, self.actionsholder, self.rewardsholder)
+            self.acc_op = self.accuracy(self.probs_op, self.actionsholder)
+            self.train_op = self.train(self.loss_op, learning_rate)
+
+            self.mean_reward_op = tf.reduce_mean(self.rewardsholder)
+
+            self.tvars = tf.trainable_variables()
+            self.grads_op = tf.gradients(self.loss_op, self.tvars)
+
+            # create a summary for our cost and accuracy
+            tf.summary.scalar("loss", self.loss_op)
+            tf.summary.scalar("accuracy", self.acc_op)
+            tf.summary.scalar("mean_reward_op", self.mean_reward_op)
+            self.summary_op = tf.summary.merge_all()
 
             self.saver = tf.train.Saver()
+
             self.init_op = tf.global_variables_initializer()
+
+        self.summary_writer = tf.summary.FileWriter(self.summary_logdir, self.g)
 
     def start_session(self, config=None):
         self.sess = tf.Session(graph=self.g, config=config)
@@ -82,6 +98,10 @@ class CNNPolicy:
             self.saver.save(self.sess, os.path.join(self.checkpoint_dir, 'model.ckpt'), global_step=global_step)
         else:
             self.saver.save(self.sess, os.path.join(self.checkpoint_dir, 'model.ckpt'))
+
+    def write_summary(self, summary, step):
+        self.summary_writer.add_summary(summary, global_step=step)
+        self.summary_writer.flush()
 
     def eval_state(self, state, moves=None):
         """Given a GameState object, returns a list of (action, probability) pairs
@@ -126,6 +146,14 @@ class CNNPolicy:
         states = self.reordering_states_tensor(states)
         return self.sess.run(self.probs_op,
                              feed_dict={self.statesholder: states})
+
+    def gradients(self, state, action, reward):
+        return self.sess.run([self.grads_op, self.loss_op, self.acc_op, self.summary_op],
+                             feed_dict={
+                                 self.statesholder: np.expand_dims(state, axis=0),
+                                 self.actionsholder: np.expand_dims(action, axis=0),
+                                 self.rewardsholder: np.expand_dims(reward, axis=0)
+                             })
 
     def run_train(self, step, states, actions, rewards):
         states = self.reordering_states_tensor(states)
@@ -223,10 +251,6 @@ class CNNPolicy:
             flatten = tf.reshape(conv13, [-1, self.bsize**2])
             logits = tf.add(flatten, bias, name=scope.name)
 
-        # softmax
-        # with tf.variable_scope('softmax') as scope:
-        #     logits_op = tf.nn.softmax(linear)
-
         return logits
 
     def probs(self, logits):
@@ -255,9 +279,10 @@ class CNNPolicy:
         return acc
 
     def train(self, loss, learning_rate):
-        optimizer = tf.train.AdamOptimizer(learning_rate)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
         train_op = optimizer.minimize(loss)
         return train_op
+
 
     def activation_summary(x):
         """Helper to create summaries for activations.

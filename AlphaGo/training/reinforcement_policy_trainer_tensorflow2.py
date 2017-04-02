@@ -34,6 +34,7 @@ flags.DEFINE_boolean('greedy_leaner', False, '')
 flags.DEFINE_integer('greedy_start', 100, 'Interval steps to execute checkpoint.')
 flags.DEFINE_boolean('save_sgf', True,
                      'Save game state in sgf format.')
+flags.DEFINE_integer("num_train_timestep", 100, "Maximum number of train time-step per game.")
 
 flags.DEFINE_float('learning_rate', 1e-3, 'Learning rate.')
 flags.DEFINE_float('policy_temperature', 0.67, 'Policy temperature.')
@@ -81,14 +82,17 @@ def init_player(logdir, restore_checkpoint=False, greedy=False):
         if FLAGS.verbose:
             print("Randomly selected previous iteration of the SL policy network. {}".format(checkpoint_dir))
         policy_net = tf_policy.CNNPolicy(checkpoint_dir=checkpoint_dir,
+                                         summary_logdir=summary_logdir,
                                          filters=filters)
     else:
-        policy_net = tf_policy.CNNPolicy(checkpoint_dir=logdir)
+        policy_net = tf_policy.CNNPolicy(checkpoint_dir=logdir,
+                                         summary_logdir=summary_logdir)
 
-    policy_net.init_graph(train=False)
+    policy_net.init_graph()
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
                             device_count={'GPU': 1})
     policy_net.start_session(config)
+
     if restore_checkpoint:
         policy_net.load_model()
 
@@ -109,9 +113,6 @@ def playout(step, learner, num_games, value=zero_baseline):
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
 
     opponent = init_player(opponent_policy_logdir, restore_checkpoint=True)
-
-    # restore latest checkpoint
-    learner.policy.load_model()
 
     board_size = learner.policy.bsize
     states = [go.GameState(size=board_size) for _ in range(num_games)]
@@ -153,10 +154,10 @@ def playout(step, learner, num_games, value=zero_baseline):
                 learner_won[idx] = state.get_winner() == learner_color[idx]
                 just_finished.append(idx)
 
-                state_batch.append(np.concatenate(game_states[idx], axis=0))
-                action_batch.append(np.concatenate(game_actions[idx], axis=0))
+                state_batch.append(np.concatenate(game_states[idx][:FLAGS.num_train_timestep], axis=0))
+                action_batch.append(np.concatenate(game_actions[idx][:FLAGS.num_train_timestep], axis=0))
                 z = 1 if learner_won[idx] else -1
-                reward_batch.append(np.array([z - value(state) for state in game_states[idx]]))
+                reward_batch.append(np.array([z - value(state) for state in game_states[idx][:FLAGS.num_train_timestep]]))
 
         for idx in just_finished:
             del idxs_to_unfinished_states[idx]
@@ -301,18 +302,17 @@ def init_checkpoint_with_keras_weights(cluster, server, num_workers):
         actionsholder = policy._actionsholder()
         rewardsholder = policy._rewardsholder()
 
-        logits_op = policy.inference(statesholder,
-                                     weight_setter=init_keras_weight_setter())
+        logits_op = policy.inference(statesholder, weight_setter=init_keras_weight_setter())
         loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
 
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
             rep_op = tf.train.SyncReplicasOptimizer(grad_op,
-                                                    replicas_to_aggregate=num_workers,
-                                                    replica_id=FLAGS.task_index,
-                                                    total_num_replicas=num_workers,
-                                                    use_locking=True)
+                                           replicas_to_aggregate=num_workers,
+                                           replica_id=FLAGS.task_index,
+                                           total_num_replicas=num_workers,
+                                           use_locking=True)
 
             rep_op.minimize(loss_op, global_step=global_step)
 
@@ -339,7 +339,6 @@ def init_checkpoint_with_keras_weights(cluster, server, num_workers):
 
 def run_training(cluster, server, num_workers):
     learner = init_player(FLAGS.local_logdir, greedy=True)
-    policy = learner.policy
 
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
@@ -351,18 +350,10 @@ def run_training(cluster, server, num_workers):
                                       initializer=tf.constant_initializer(1),
                                       trainable=False)
 
-        statesholder = policy._statesholder()
-        actionsholder = policy._actionsholder()
-        rewardsholder = policy._rewardsholder()
+        statesholder = learner.policy._statesholder()
 
-        logits_op = policy.inference(statesholder)
-        probs_op = policy.probs(logits_op)
-        loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
-        acc_op = policy.accuracy(probs_op, actionsholder)
+        learner.policy.inference(statesholder)
 
-        mean_reward_op = tf.reduce_mean(rewardsholder)
-
-        # get network weights
         tvars = tf.trainable_variables()
 
         # define placeholder for appling buffered gradients
@@ -410,10 +401,12 @@ def run_training(cluster, server, num_workers):
             conv2d_13_W_grad, conv2d_13_b_grad,
             bias_1_grad
         ]
+
+        grads_and_vars = zip(batch_grad, tvars)
+
         # specify replicas optimizer
         with tf.name_scope('dist_train'):
             opt = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
-            grads_op = tf.gradients(loss_op, tvars)
             if FLAGS.sync:
                 rep_op = tf.train.SyncReplicasOptimizer(opt,
                                                         replicas_to_aggregate=num_workers,
@@ -421,16 +414,16 @@ def run_training(cluster, server, num_workers):
                                                         total_num_replicas=num_workers,
                                                         use_locking=True)
 
-                grads_and_vars = zip(batch_grad, tvars)
                 update_grads_op = rep_op.apply_gradients(grads_and_vars, global_step=global_step)
             else:
-                grads_and_vars = zip(batch_grad, tvars)
-                update_grads_op = rep_op.apply_gradients(grads_and_vars, global_step=global_step)
+                update_grads_op = opt.apply_gradients(grads_and_vars, global_step=global_step)
 
+        """
         for grad, var in grads_and_vars:
             tf.summary.histogram(var.name, var)
             if grad is not None:
                 tf.summary.histogram(var.name + '/gradients', grad)
+        """
 
         if FLAGS.sync:
             init_token_op = rep_op.get_init_tokens_op()
@@ -440,15 +433,9 @@ def run_training(cluster, server, num_workers):
         # save latest parameter to local disk then load parameter in local session.
         local_saver = tf.train.Saver()
 
-        # create a summary for our cost and accuracy
-        tf.summary.scalar("loss", loss_op)
-        tf.summary.scalar("accuracy", acc_op)
-        tf.summary.scalar("mean_reward_op", mean_reward_op)
-
         # merge all summaries into a single "operation" which we can execute in a session
-        summary_op = tf.summary.merge_all()
         init_op = tf.global_variables_initializer()
-        print("Variables initialized ...")
+        print("Variable initialized ...")
 
     is_chief = FLAGS.task_index == 0
     sv = tf.train.Supervisor(is_chief=is_chief,
@@ -466,14 +453,16 @@ def run_training(cluster, server, num_workers):
         wait_for_all_worker_checking_in(num_workers)
 
         if is_chief:
-            summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)
             if FLAGS.sync:
                 sv.start_queue_runners(sess, [chief_queue_runner])
                 sess.run(init_token_op)
 
+        # initialize gradients buffer
         grad_buffer = sess.run(tvars)
         for ix, grad in enumerate(grad_buffer):
             grad_buffer[ix] = grad * 0
+
+        losses, accs = [], []
 
         # perform training cycles
         step = 0
@@ -486,59 +475,59 @@ def run_training(cluster, server, num_workers):
                   " to {:s} to execute playout.".format(FLAGS.local_logdir))
             local_saver.save(sess, os.path.join(FLAGS.local_logdir, 'model.ckpt'), global_step=0)
             print("Saved successfully.")
-
-            start_time = time.time()
+            # restore latest checkpoint
+            learner.policy.load_model()
 
             (succeed, win_ratio, states, actions, rewards) = get_game_batch(step, learner)
 
-            # Retry if playout failed unexpectedly.
+            # retry if playout failed unexpectedly.
             if not succeed:
                 continue
 
+            start_time = time.time()
+
+            # buffer gradients then averaged
+            # each gradients arg computed using local variables
             for i, state in enumerate(states):
-                grads = sess.run(grads_op, feed_dict={
-                                    statesholder: np.expand_dims(states[i], axis=0),
-                                    actionsholder: np.expand_dims(actions[i], axis=0)
-                                 })
+                grads, loss, acc, summary = learner.policy.gradients(state,
+                                                                     actions[i], rewards[i])
                 for ix, grad in enumerate(grads):
                     grad_buffer[ix] += grad * rewards[i]
+                losses.append(loss)
+                accs.append(acc)
 
             T = states.shape[0]
             grad_buffer = [grad/T for grad in grad_buffer]
+            loss = np.mean(losses)
+            acc = np.mean(accs)
+            del losses[:]
+            del accs[:]
 
-            _, step = sess.run([update_grads_op, global_step], feed_dict={
-                conv2d_1_W_grad: grad_buffer[0], conv2d_1_b_grad: grad_buffer[1],
-                conv2d_2_W_grad: grad_buffer[2], conv2d_2_b_grad: grad_buffer[3],
-                conv2d_3_W_grad: grad_buffer[4], conv2d_3_b_grad: grad_buffer[5],
-                conv2d_4_W_grad: grad_buffer[6], conv2d_4_b_grad: grad_buffer[7],
-                conv2d_5_W_grad: grad_buffer[8], conv2d_5_b_grad: grad_buffer[9],
-                conv2d_6_W_grad: grad_buffer[10], conv2d_6_b_grad: grad_buffer[11],
-                conv2d_7_W_grad: grad_buffer[12], conv2d_7_b_grad: grad_buffer[13],
-                conv2d_8_W_grad: grad_buffer[14], conv2d_8_b_grad: grad_buffer[15],
-                conv2d_9_W_grad: grad_buffer[16], conv2d_9_b_grad: grad_buffer[17],
-                conv2d_10_W_grad: grad_buffer[18], conv2d_10_b_grad: grad_buffer[19],
-                conv2d_11_W_grad: grad_buffer[20], conv2d_11_b_grad: grad_buffer[21],
-                conv2d_12_W_grad: grad_buffer[22], conv2d_12_b_grad: grad_buffer[23],
-                conv2d_13_W_grad: grad_buffer[24], conv2d_13_b_grad: grad_buffer[25],
-                bias_1_grad: grad_buffer[26]})
+            _, step = sess.run(
+                [update_grads_op, global_step],
+                feed_dict={
+                    conv2d_1_W_grad: grad_buffer[0], conv2d_1_b_grad: grad_buffer[1],
+                    conv2d_2_W_grad: grad_buffer[2], conv2d_2_b_grad: grad_buffer[3],
+                    conv2d_3_W_grad: grad_buffer[4], conv2d_3_b_grad: grad_buffer[5],
+                    conv2d_4_W_grad: grad_buffer[6], conv2d_4_b_grad: grad_buffer[7],
+                    conv2d_5_W_grad: grad_buffer[8], conv2d_5_b_grad: grad_buffer[9],
+                    conv2d_6_W_grad: grad_buffer[10], conv2d_6_b_grad: grad_buffer[11],
+                    conv2d_7_W_grad: grad_buffer[12], conv2d_7_b_grad: grad_buffer[13],
+                    conv2d_8_W_grad: grad_buffer[14], conv2d_8_b_grad: grad_buffer[15],
+                    conv2d_9_W_grad: grad_buffer[16], conv2d_9_b_grad: grad_buffer[17],
+                    conv2d_10_W_grad: grad_buffer[18], conv2d_10_b_grad: grad_buffer[19],
+                    conv2d_11_W_grad: grad_buffer[20], conv2d_11_b_grad: grad_buffer[21],
+                    conv2d_12_W_grad: grad_buffer[22], conv2d_12_b_grad: grad_buffer[23],
+                    conv2d_13_W_grad: grad_buffer[24], conv2d_13_b_grad: grad_buffer[25],
+                    bias_1_grad: grad_buffer[26]})
 
             # reset gradient buffer for next step
             for ix, grad in enumerate(grad_buffer):
                 grad_buffer[ix] = grad * 0
 
-            # perform the operations we defined earlier on batch
-            loss, acc, mean_reward, summary = sess.run(
-                [loss_op, acc_op, mean_reward_op, summary_op],
-                feed_dict={
-                    statesholder: states,
-                    actionsholder: actions,
-                    rewardsholder: rewards
-                })
-
             elapsed_time = time.time() - start_time
             print("[Step {:d}]".format(step) +
                   " Loss: {:.4f},".format(loss) +
-                  " Mean reward: {:.4f},".format(mean_reward) +
                   " Accuracy: {:.4f},".format(acc) +
                   " Elapsed: {:3.2f}s".format(float(elapsed_time)))
 
@@ -549,8 +538,7 @@ def run_training(cluster, server, num_workers):
                         print("Execute checkpoint at step {:d}.").format(step)
                         reports += 1
                         sv.saver.save(sess, sv.save_path, global_step=step)
-                        summary_writer.add_summary(summary, global_step=step)
-                        summary_writer.flush()
+                        learner.policy.write_summary(summary, step)
 
                     # update opponent pool
                     if step >= FLAGS.opponent_checkpoint * (opponents+1):
