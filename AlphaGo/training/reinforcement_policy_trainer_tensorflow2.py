@@ -27,8 +27,7 @@ flags.DEFINE_integer("task_index", 0, "Index of task within the job")
 flags.DEFINE_boolean('sync', False, 'Aggregate worker gradients synchronously.')
 
 flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
-flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
-flags.DEFINE_integer('num_playout_cpu', 1, 'Number of cpu for playout.')
+flags.DEFINE_integer('num_games', 30, 'Number of games in batch.')
 flags.DEFINE_integer("move_limit", 500, "Maximum number of moves per game.")
 flags.DEFINE_boolean('greedy_leaner', False, '')
 flags.DEFINE_integer('greedy_start', 100, 'Interval steps to execute checkpoint.')
@@ -50,6 +49,12 @@ flags.DEFINE_string('sharedir', '/s3',
                     'Shared directory where to write train logs.')
 flags.DEFINE_string('local_logdir', '/tmp/logs',
                     'Directory where to save latest parameters for playout.')
+flags.DEFINE_string('summary_logdir', '/tmp/logs',
+                    'Directory where to write summary logs.')
+flags.DEFINE_string('sgf_logdir', '/tmp/sgf',
+                    'Directory where to save playout sgf files.')
+flags.DEFINE_string('opponent_pool', '/tmp/opponents',
+                    'Opponent weights pool for playout.')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
 
@@ -57,11 +62,8 @@ flags.DEFINE_boolean('verbose', True, '')
 
 FLAGS = flags.FLAGS
 
-# Define concrete working directory
+# Define shared working sub directory
 logdir = os.path.join(FLAGS.sharedir, 'logs')  # Save checkpoint files.
-summary_logdir = os.path.join(FLAGS.sharedir, 'summary')  # Save summary logs.
-opponent_pool = os.path.join(FLAGS.sharedir, 'opponents')  # Opponent weight pool.
-sgf_logdir = os.path.join(FLAGS.sharedir, 'sgf')  # Save sgf files of training playout.
 checkin_dir = os.path.join(FLAGS.sharedir, 'checkin')
 
 
@@ -82,11 +84,11 @@ def init_player(logdir, restore_checkpoint=False, greedy=False):
         if FLAGS.verbose:
             print("Randomly selected previous iteration of the SL policy network. {}".format(checkpoint_dir))
         policy_net = tf_policy.CNNPolicy(checkpoint_dir=checkpoint_dir,
-                                         summary_logdir=summary_logdir,
+                                         summary_logdir=FLAGS.summary_logdir,
                                          filters=filters)
     else:
         policy_net = tf_policy.CNNPolicy(checkpoint_dir=logdir,
-                                         summary_logdir=summary_logdir)
+                                         summary_logdir=FLAGS.summary_logdir)
 
     policy_net.init_graph()
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement,
@@ -108,7 +110,7 @@ def init_player(logdir, restore_checkpoint=False, greedy=False):
 
 
 def playout(step, learner, num_games, value=zero_baseline):
-    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(opponent_pool, '*')))
+    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
 
@@ -173,7 +175,7 @@ def playout(step, learner, num_games, value=zero_baseline):
     opponent.policy.close_session()
 
     if FLAGS.save_sgf:
-        sgf_path = os.path.join(sgf_logdir, str(FLAGS.task_index))
+        sgf_path = os.path.join(FLAGS.sgf_logdir, str(FLAGS.task_index))
         if not os.path.exists(sgf_path):
             os.mkdir(sgf_path)
 
@@ -198,25 +200,24 @@ def get_game_batch(step, learner):
         print("Playing self match at step {:d}".format(step))
 
     start_time = time.time()
-    succeed = True
     try:
         (win_ratio, states, actions, rewards) = playout(step, learner, FLAGS.num_games)
+        elapsed_sec = time.time() - start_time
+
+        if FLAGS.verbose:
+            print("[Batch {:d}] {:d} games.".format(step, FLAGS.num_games) +
+                  " {:d} states.".format(states.shape[0]) +
+                  " {:d} moves.".format(actions.shape[0]) +
+                  " {:d} rewards.".format(rewards.shape[0]) +
+                  " {:.2f}% win.".format(100*win_ratio) +
+                  " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
     except:
-        succeed = False
         err, msg, _ = sys.exc_info()
         sys.stderr.write("{} {}\n".format(err, msg))
         sys.stderr.write(traceback.format_exc())
-    elapsed_sec = time.time() - start_time
+        return False, None, None, None, None
 
-    if FLAGS.verbose:
-        print("[Batch {:d}] {:d} games.".format(step, FLAGS.num_games) +
-              " {:d} states.".format(states.shape[0]) +
-              " {:d} moves.".format(actions.shape[0]) +
-              " {:d} rewards.".format(rewards.shape[0]) +
-              " {:.2f}% win.".format(100*win_ratio) +
-              " Elapsed: {:3.2f}s".format(float(elapsed_sec)))
-
-    return succeed, win_ratio, states, actions, rewards
+    return True, win_ratio, states, actions, rewards
 
 
 def _make_training_pair(st, mv, preprocessor):
@@ -309,10 +310,10 @@ def init_checkpoint_with_keras_weights(cluster, server, num_workers):
         with tf.name_scope('dist_train'):
             grad_op = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
             rep_op = tf.train.SyncReplicasOptimizer(grad_op,
-                                           replicas_to_aggregate=num_workers,
-                                           replica_id=FLAGS.task_index,
-                                           total_num_replicas=num_workers,
-                                           use_locking=True)
+                                                    replicas_to_aggregate=num_workers,
+                                                    replica_id=FLAGS.task_index,
+                                                    total_num_replicas=num_workers,
+                                                    use_locking=True)
 
             rep_op.minimize(loss_op, global_step=global_step)
 
@@ -467,14 +468,13 @@ def run_training(cluster, server, num_workers):
         # perform training cycles
         step = 0
         reports = 0
-        opponents = len(glob.glob(os.path.join(opponent_pool, '*'))) - 1
+        opponents = len(glob.glob(os.path.join(FLAGS.opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
             # workaround. remote session is too slow to playout.
             # save latest parameter to local disk then load parameter in local session.
-            print("workaround. Save latest parameter" +
+            print("Save latest parameter" +
                   " to {:s} to execute playout.".format(FLAGS.local_logdir))
             local_saver.save(sess, os.path.join(FLAGS.local_logdir, 'model.ckpt'), global_step=0)
-            print("Saved successfully.")
             # restore latest checkpoint
             learner.policy.load_model()
 
@@ -546,7 +546,7 @@ def run_training(cluster, server, num_workers):
                         opponents += 1
                         meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(logdir, 'model.ckpt-*.meta'))]
                         opponent_step = max(int(re.findall(r'model\.ckpt\-(\d+)\.meta', f)[0]) for f in meta_files)
-                        new_opponent_path = os.path.join(opponent_pool, str(opponent_step))
+                        new_opponent_path = os.path.join(FLAGS.opponent_pool, str(opponent_step))
                         os.mkdir(new_opponent_path)
                         for src in glob.glob(os.path.join(logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
                             shutil.copy2(src, new_opponent_path)

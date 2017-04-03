@@ -28,7 +28,6 @@ flags.DEFINE_boolean('sync', False, 'Aggregate worker gradients synchronously.')
 
 flags.DEFINE_integer('max_steps', 10000, 'Max number of steps to run.')
 flags.DEFINE_integer('num_games', 1, 'Number of games in batch.')
-flags.DEFINE_integer('num_playout_cpu', 1, 'Number of cpu for playout.')
 flags.DEFINE_integer("move_limit", 500, "Maximum number of moves per game.")
 flags.DEFINE_boolean('greedy_leaner', False, '')
 flags.DEFINE_integer('greedy_start', 100, '')
@@ -50,6 +49,12 @@ flags.DEFINE_string('sharedir', '/s3',
                     'Shared directory where to write train logs.')
 flags.DEFINE_string('local_logdir', '/tmp/logs',
                     'Directory where to save latest parameters for playout.')
+flags.DEFINE_string('summary_logdir', '/tmp/logs',
+                    'Directory where to write summary logs.')
+flags.DEFINE_string('sgf_logdir', '/tmp/sgf',
+                    'Directory where to save playout sgf files.')
+flags.DEFINE_string('opponent_pool', '/tmp/opponents',
+                    'Opponent weights pool for playout.')
 
 flags.DEFINE_string('keras_weights', None, 'Keras policy model file to migrate')
 
@@ -57,11 +62,8 @@ flags.DEFINE_boolean('verbose', True, '')
 
 FLAGS = flags.FLAGS
 
-# Define concrete working directory
+# Define shared working sub directory
 logdir = os.path.join(FLAGS.sharedir, 'logs')  # Save checkpoint files.
-summary_logdir = os.path.join(FLAGS.sharedir, 'summary')  # Save summary logs.
-opponent_pool = os.path.join(FLAGS.sharedir, 'opponents')  # Opponent weight pool.
-sgf_logdir = os.path.join(FLAGS.sharedir, 'sgf')  # Save sgf files of training playout.
 checkin_dir = os.path.join(FLAGS.sharedir, 'checkin')
 
 
@@ -106,7 +108,7 @@ def init_player(logdir, restore_checkpoint=False, greedy=False):
 
 
 def playout(step, learner, num_games, value=zero_baseline):
-    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(opponent_pool, '*')))
+    opponent_policy_logdir = np.random.choice(glob.glob(os.path.join(FLAGS.opponent_pool, '*')))
     if FLAGS.verbose:
         print("Randomly selected opponent from pool. {}".format(opponent_policy_logdir))
 
@@ -171,7 +173,7 @@ def playout(step, learner, num_games, value=zero_baseline):
     opponent.policy.close_session()
 
     if FLAGS.save_sgf:
-        sgf_path = os.path.join(sgf_logdir, str(FLAGS.task_index))
+        sgf_path = os.path.join(FLAGS.sgf_logdir, str(FLAGS.task_index))
         if not os.path.exists(sgf_path):
             os.mkdir(sgf_path)
 
@@ -213,7 +215,7 @@ def get_game_batch(step, learner):
         sys.stderr.write(traceback.format_exc())
         return False, None, None, None, None
 
-    return True, win_ratio, states[:100], actions[:100], rewards[:100]
+    return True, win_ratio, states, actions, rewards
 
 
 def _make_training_pair(st, mv, preprocessor):
@@ -334,7 +336,9 @@ def init_checkpoint_with_keras_weights(cluster, server, num_workers):
     sv.stop()
 
 
-def run_training(policy, cluster, server, num_workers):
+def run_training(cluster, server, num_workers):
+    learner = init_player(FLAGS.local_logdir, greedy=True)
+
     # Between-graph replication
     with tf.device(tf.train.replica_device_setter(
                    worker_device="/job:worker/task:{:d}".format(FLAGS.task_index),
@@ -345,14 +349,14 @@ def run_training(policy, cluster, server, num_workers):
                                       initializer=tf.constant_initializer(1),
                                       trainable=False)
 
-        statesholder = policy._statesholder()
-        actionsholder = policy._actionsholder()
-        rewardsholder = policy._rewardsholder()
+        statesholder = learner.policy._statesholder()
+        actionsholder = learner.policy._actionsholder()
+        rewardsholder = learner.policy._rewardsholder()
 
-        logits_op = policy.inference(statesholder)
-        probs_op = policy.probs(logits_op)
-        loss_op = policy.loss(logits_op, actionsholder, rewardsholder)
-        acc_op = policy.accuracy(probs_op, actionsholder)
+        logits_op = learner.policy.inference(statesholder)
+        probs_op = learner.policy.probs(logits_op)
+        loss_op = learner.policy.loss(logits_op, actionsholder, rewardsholder)
+        acc_op = learner.policy.accuracy(probs_op, actionsholder)
 
         mean_reward_op = tf.reduce_mean(rewardsholder)
 
@@ -418,17 +422,8 @@ def run_training(policy, cluster, server, num_workers):
 
         wait_for_all_worker_checking_in(num_workers)
 
-        # create leaner player
-        # policy.sess = sess
-        # policy.statesholder = statesholder
-        # policy.probs_op = probs_op
-        # learner = ProbabilisticPolicyPlayer(policy,
-        #                                     FLAGS.policy_temperature,
-        #                                     move_limit=FLAGS.move_limit)
-        learner = None
-
         if is_chief:
-            summary_writer = tf.summary.FileWriter(summary_logdir, sess.graph)
+            summary_writer = tf.summary.FileWriter(FLAGS.summary_logdir, sess.graph)
             if FLAGS.sync:
                 sv.start_queue_runners(sess, [chief_queue_runner])
                 sess.run(init_token_op)
@@ -436,22 +431,23 @@ def run_training(policy, cluster, server, num_workers):
         # perform training cycles
         step = 0
         reports = 0
-        opponents = len(glob.glob(os.path.join(opponent_pool, '*'))) - 1
+        opponents = len(glob.glob(os.path.join(FLAGS.opponent_pool, '*'))) - 1
         while not sv.should_stop() and step <= FLAGS.max_steps:
             # workaround. remote session is too slow to playout.
             # save latest parameter to local disk then load parameter in local session.
-            print("workaround. Save latest parameter" +
+            print("Save latest parameter" +
                   " to {:s} to execute playout.".format(FLAGS.local_logdir))
             local_saver.save(sess, os.path.join(FLAGS.local_logdir, 'model.ckpt'), global_step=0)
-            print("Saved successfully.")
-
-            start_time = time.time()
+            # restore latest checkpoint
+            learner.policy.load_model()
 
             (succeed, win_ratio, states, actions, rewards) = get_game_batch(step, learner)
 
             # Retry if playout failed unexpectedly.
             if not succeed:
                 continue
+
+            start_time = time.time()
 
             # perform the operations we defined earlier on batch
             _, loss, acc, mean_reward, summary, step = sess.run(
@@ -485,7 +481,7 @@ def run_training(policy, cluster, server, num_workers):
                         opponents += 1
                         meta_files = [os.path.basename(f) for f in glob.glob(os.path.join(logdir, 'model.ckpt-*.meta'))]
                         opponent_step = max(int(re.findall(r'model\.ckpt\-(\d+)\.meta', f)[0]) for f in meta_files)
-                        new_opponent_path = os.path.join(opponent_pool, str(opponent_step))
+                        new_opponent_path = os.path.join(FLAGS.opponent_pool, str(opponent_step))
                         os.mkdir(new_opponent_path)
                         for src in glob.glob(os.path.join(logdir, 'model.ckpt-{:d}.*'.format(opponent_step))):
                             shutil.copy2(src, new_opponent_path)
@@ -517,7 +513,6 @@ def main(argv=None):
                              job_name=FLAGS.job_name,
                              task_index=FLAGS.task_index)
 
-    learner_policy = tf_policy.CNNPolicy(checkpoint_dir=logdir)
     if FLAGS.job_name == 'ps':
         # Workaround. check in for worker management
         ps_checkin_dir = os.path.join(checkin_dir, FLAGS.job_name)
@@ -533,9 +528,9 @@ def main(argv=None):
         server.join()
     elif FLAGS.job_name == 'worker':
         if FLAGS.keras_weights:
-            init_checkpoint_with_keras_weights(learner_policy, cluster, server, num_workers)
+            init_checkpoint_with_keras_weights(cluster, server, num_workers)
         else:
-            run_training(learner_policy, cluster, server, num_workers)
+            run_training(cluster, server, num_workers)
 
 
 if __name__ == '__main__':
