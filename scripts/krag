@@ -29,6 +29,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    import tensorflow as tf
+    from keras.backend.tensorflow_backend import set_session
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = 0.2
+    set_session(tf.Session(config=config))
+
     # value net is not implemented yet
     value_net = None
 
