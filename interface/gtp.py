@@ -183,7 +183,9 @@ class Engine(object):
         return gtp_list(self.known_commands)
 
     def cmd_quit(self, arguments):
+        sgf_file_name = self._game.get_current_state_as_sgf()
         self.disconnect = True
+        return sgf_file_name
 
     def cmd_boardsize(self, arguments):
         if arguments.isdigit():
@@ -213,6 +215,10 @@ class Engine(object):
             color, vertex = move
             if self.vertex_in_range(vertex):
                 if self._game.make_move(color, vertex):
+                    try:
+                        self._game.get_current_state_as_sgf()
+                    except:
+                        pass
                     return
         raise ValueError("illegal move")
 
@@ -221,6 +227,10 @@ class Engine(object):
         if c:
             move = self._game.get_move(c)
             self._game.make_move(c, move)
+            try:
+                self._game.get_current_state_as_sgf()
+            except:
+                pass
             return gtp_vertex(move)
         else:
             raise ValueError("unknown player: {}".format(arguments))

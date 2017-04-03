@@ -25,6 +25,12 @@ if __name__ == "__main__":
                               Main time, Byo-yomi time and Byo-yomi stone")
     parser.add_argument("--server", default=False, action="store_true",
                         help="Server mode")
+    parser.add_argument("--player", "-p", type=str, default='mcts', choices=['mcts', 'prob', 'greedy'],
+                        help="Choice player type (Default: mcts)")
+    parser.add_argument("--policy-temp", type=float, default=0.67,
+                        help="Distribution temperature of players using policies (Default: 0.67)")
+    parser.add_argument("--greedy-start", type=int, default=None,
+                        help="Greedy start option for ProbabilisticPolicyPlayer (Default: None)")
 
     args = parser.parse_args()
 
@@ -42,11 +48,21 @@ if __name__ == "__main__":
 
     m, ms, b, bs = [(int)(t) for t in args.time.split()]
 
-    player = ai.MCTSPlayer(value_net,
-                           policy_net,
-                           fast_policy_net,
-                           timer=timer.Canadian(m, ms, b, bs),
-                           n_playout=args.n_playout)
+    if args.player == 'mcts':
+        print('Loading MCTS player')
+        player = ai.MCTSPlayer(value_net,
+                               policy_net,
+                               fast_policy_net,
+                               timer=timer.Canadian(m, ms, b, bs),
+                               n_playout=args.n_playout)
+    elif args.player == 'prob':
+        print('Loading Probabilistic player')
+        player = ai.ProbabilisticPolicyPlayer(policy_net,
+                                              temperature=args.policy_temp,
+                                              greedy_start=args.greedy_start)
+    elif args.player == 'greedy':
+        print('Loading Greedy player')
+        player = ai.GreedyPolicyPlayer(policy_net)
 
     gtp_game = GTPGameConnector(player)
     gtp_engine = ExtendedGtpEngine(gtp_game, name='RocAlphaGo', version='0.0')
