@@ -237,7 +237,11 @@ def init_keras_weight_setter():
     def keras_weight(layer_i, wb, scope_name):
         layer = keras_model_weights[scope_name]
         if wb.upper() == 'W':
-            value = layer[scope_name + '_W:0'].value
+            if scope_name + '_W:0' in layer:
+                value = layer[scope_name + '_W:0'].value
+            else:
+                value = layer[scope_name + '_W'].value
+
             value = value.transpose((2, 3, 1, 0))
             # Transpose kernel dimention ordering.
             # TF uses the last dimension as channel dimension,
@@ -246,9 +250,15 @@ def init_keras_weight_setter():
             return tf.Variable(value, name=scope_name + '_W')
         elif wb.lower() == 'b':
             if layer_i == 14:
-                return tf.Variable(layer['Variable:0'].value, name='Variable')
+                if 'Variable:0' in layer:
+                    return tf.Variable(layer['Variable:0'].value, name='Variable')
+                else:
+                    return tf.Variable(layer['param_0'].value, name='Variable')
             else:
-                return tf.Variable(layer[scope_name + '_b:0'].value, name=scope_name + '_b')
+                if scope_name + '_b:0' in layer:
+                    return tf.Variable(layer[scope_name + '_b:0'].value, name=scope_name + '_b')
+                else:
+                    return tf.Variable(layer[scope_name + '_b'].value, name=scope_name + '_b')
     return keras_weight
 
 
