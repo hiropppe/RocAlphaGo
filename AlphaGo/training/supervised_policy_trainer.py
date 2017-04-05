@@ -220,6 +220,11 @@ class LrStepDecayCallback(Callback):
         # set initial learning rate
         self.set_lr()
 
+    def on_epoch_begin(self, epoch, logs={}):
+        print("\nEpoch: " + str(epoch) +
+              " Batch: " + str(self.metadata["current_batch"]) +
+              " Learning rate: " + str(K.get_value(self.model.optimizer.lr)))
+
     def on_batch_begin(self, batch, logs={}):
         # using batch is not usefull as it starts at 0 every epoch
 
