@@ -350,9 +350,9 @@ class GameState(object):
         if not self.is_legal(action):
             return False
 
-        # if we haven't found a capture by a certain number of moves, assume it's worked.
+        # if we haven't found a capture by a certain number of moves, give up.
         if remaining_attempts <= 0:
-            return True
+            return False
 
         hunter_player = self.current_player
         prey_player = - self.current_player
