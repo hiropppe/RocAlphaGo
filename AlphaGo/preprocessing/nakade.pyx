@@ -36,14 +36,18 @@ cdef enum:
 
 cdef enum:
     NAKADE_3 = 6
-    NAKADE_4 = 3
+    NAKADE_4 = 5
     NAKADE_5 = 9
     NAKADE_6 = 4
 
 cdef unsigned long long[361][4] hash_bit
 cdef unsigned long long[361] shape_bit
 
-cdef int[4] NAKADE_PATTERNS = {NAKADE_3, NAKADE_4, NAKADE_5, NAKADE_6}
+cdef int[4] NAKADE_PATTERNS
+NAKADE_PATTERNS[0] = NAKADE_3
+NAKADE_PATTERNS[1] = NAKADE_4
+NAKADE_PATTERNS[2] = NAKADE_5
+NAKADE_PATTERNS[3] = NAKADE_6
 
 cdef int NAKADE_MAX_SIZE = NAKADE_5
 
@@ -69,19 +73,19 @@ cdef mt():
 
 
 cdef NORTH(pos):
-    return pos - BOARD_SIZE
+    return pos - BOARD_SIZE if pos >= BOARD_SIZE else -1
 
 
 cdef SOUTH(pos):
-    return pos + BOARD_SIZE
+    return pos + BOARD_SIZE if pos + BOARD_SIZE < BOARD_MAX else -1
 
 
 cdef WEST(pos):
-    return pos - 1
+    return pos - 1 if pos % BOARD_SIZE != 0 else -1
 
 
 cdef EAST(pos):
-    return pos + 1
+    return pos + 1 if (pos + 1) % BOARD_SIZE != 0 else -1
 
 
 cdef set_neighbor4(int[4] neighbor4, int center):
@@ -110,18 +114,20 @@ def search_nakade(state):
     set_neighbor4(neighbor4, last_pos)
 
     for i in xrange(4):
-        (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
-        if onboard(nx, ny):
+        if neighbor4[i] != -1:
+            (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
             print 'Search', ny, nx
             nakade_pos = find_nakade_pos(state, neighbor4[i], last_color)
             if nakade_pos > -1:
                 print 'Vital vertex of nakade', divmod(nakade_pos, 19)
                 return nakade_pos
 
+def is_nakade_self_atari(state, pos, color):
+    pass
 
 def find_nakade_pos(state, pos, color):
     cdef int size = 0
-    cdef bool[841] flag
+    cdef bool[361] flag
     # cdef int[10] nakade = [0]*10
     cdef np.ndarray nakade = np.zeros((10,), dtype=np.int)
     cdef int nakade_num = 0
@@ -134,7 +140,7 @@ def find_nakade_pos(state, pos, color):
     nakade_queue = Queue()
     nakade_queue.put(pos)
 
-    flag = [False]*841
+    flag = [False]*361
     flag[pos] = True
 
     board = state.board
@@ -153,9 +159,9 @@ def find_nakade_pos(state, pos, color):
         set_neighbor4(neighbor4, current_pos)
 
         for i in xrange(4):
-            npos = neighbor4[i]
-            (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
-            if onboard(nx, ny):
+            if neighbor4[i] != -1:
+                npos = neighbor4[i]
+                (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
                 nc = board[ny, nx]
                 print (ny, nx), nc, flag[npos], color, (nc == 0 or nc != color)
                 if not flag[npos] and (nc == 0 or nc != color):
@@ -165,19 +171,21 @@ def find_nakade_pos(state, pos, color):
                     size += 1
 
     print 'nakade_num', nakade_num
-    if nakade_num > 5:
+    if nakade_num > 6:
+        print 'nakade_num exceed threshold', size
         return -1
 
     nakade.sort()
     nakade = nakade[-nakade_num:]
+    print 'sorted nakade shape', nakade
 
     # centering pattern
     reviser = start - nakade[0]
     for i in xrange(nakade_num):
-        # print 'shape pos', (nakade[i] + reviser)
+        print 'reivised shape pos', (nakade[i] + reviser)
         hash ^= shape_bit[nakade[i] + reviser]
 
-    if nakade_num in (3, 4, 5):
+    if nakade_num in (3, 4, 5, 6):
         for i in xrange(NAKADE_PATTERNS[nakade_num - 3]):
             print nakade_hash[nakade_num - 3][i], hash
             if nakade_hash[nakade_num - 3][i] == hash:
@@ -290,7 +298,7 @@ def initialize_hash():
 
     for i in xrange(NAKADE_6):
         nakade_hash[3][i] = 0
-        for j in xrange(5):
+        for j in xrange(6):
             nakade_hash[3][i] ^= shape_bit[start + nakade6[i][j]]
 
 
