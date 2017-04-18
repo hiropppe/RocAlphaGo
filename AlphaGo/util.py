@@ -2,7 +2,7 @@ import os
 import itertools
 import numpy as np
 import sgf
-from AlphaGo import go
+import go
 
 # for board location indexing
 LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -278,7 +278,7 @@ def get_ascii_board(state):
        A B C D E F G
     """
     board = ['\n']
-    for i in [_i for _i in xrange(state.size + 2)][::-1]:
+    for i in [_i for _i in xrange(state.size + 2)]:
         for j in xrange(state.size + 2):
             is_last_stone = False
             if i in (0, state.size + 1) and j in (0, state.size + 1):
@@ -286,9 +286,9 @@ def get_ascii_board(state):
             elif i in (0, state.size + 1):
                 ch = CINDX[j-1].upper()
             elif j == 0:
-                ch = (str)(i).rjust(2)
+                ch = (str)(state.size+1-i).rjust(2)
             elif j == state.size + 1:
-                ch = (str)(i).ljust(2)
+                ch = (str)(state.size+1-i).ljust(2)
             elif state.board[j-1][i-1] == 1:
                 if state.history[-1] \
                     and state.history[-1][0] == j-1 \
@@ -316,7 +316,7 @@ def get_ascii_board(state):
             if not is_last_stone:
                 board.append(' ')
 
-        if i == state.size and state.history:
+        if i == 1 and state.history:
             if state.history[-1]:
                 board.append('    ;{}({}{})'.format('W' if state.current_player == 1 and not state.is_end_of_game else 'B',
                                                     CINDX[state.history[-1][0]].upper(),
@@ -324,7 +324,7 @@ def get_ascii_board(state):
             else:
                 board.append('    ;{}(tt)'.format('W' if state.current_player == 1 and not state.is_end_of_game else 'B'))
 
-        if i == state.size-2 and state.is_end_of_game:
+        if i == 3 and state.is_end_of_game:
             #score_white, score_black = state.calculate_score()
             board.append('    ' + ('Draw' if not state.get_winner() else 'Winner: {}'.format(RESULT[state.get_winner()])))
             #board.append(' (W: {}, B: {})'.format(score_white, score_black))
