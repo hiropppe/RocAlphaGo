@@ -122,8 +122,59 @@ def search_nakade(state):
                 print 'Vital vertex of nakade', divmod(nakade_pos, 19)
                 return nakade_pos
 
+
 def is_nakade_self_atari(state, pos, color):
-    pass
+    cdef np.ndarray nakade = np.zeros((10,), dtype=np.int)
+    cdef int nakade_num = 0
+    cdef unsigned long long hash = 0
+    cdef int[4] neighbor4
+    cdef int gx, gy
+
+    set_neighbor4(neighbor4, pos)
+    north = divmod(neighbor4[0], BOARD_SIZE) if neighbor4[0] != -1 else None
+    west  = divmod(neighbor4[1], BOARD_SIZE) if neighbor4[1] != -1 else None
+    east  = divmod(neighbor4[2], BOARD_SIZE) if neighbor4[2] != -1 else None
+    south = divmod(neighbor4[3], BOARD_SIZE) if neighbor4[3] != -1 else None
+
+    empty_group = set()
+    
+    north_group = state.get_group(north) if north and state.board[north[0], north[1]] == color else empty_group
+    west_group  = state.get_group(west)  if west  and state.board[west[0],  west[1]]  == color else empty_group
+    east_group  = state.get_group(east)  if east  and state.board[east[0],  east[1]]  == color else empty_group
+    south_group = state.get_group(south) if south and state.board[south[0], south[1]] == color else empty_group
+
+    merged_group = south_group | west_group | north_group | east_group
+
+    for i, (gy, gx) in enumerate(merged_group):
+        nakade[i] = gy * BOARD_SIZE + gx
+        nakade_num += 1
+
+    nakade[nakade_num] = pos
+    nakade_num += 1
+
+    print 'nakade_num', nakade_num
+    if nakade_num > 6:
+        print 'nakade_num exceed threshold', nakade_num 
+        return -1
+
+    nakade.sort()
+    nakade = nakade[-nakade_num:]
+    print 'sorted nakade shape', nakade
+
+    # centering pattern
+    reviser = start - nakade[0]
+    for i in xrange(nakade_num):
+        print 'reivised shape pos', (nakade[i] + reviser)
+        hash ^= shape_bit[nakade[i] + reviser]
+
+    if nakade_num in (3, 4, 5, 6):
+        for i in xrange(NAKADE_PATTERNS[nakade_num - 3]):
+            print i, nakade_hash[nakade_num - 3][i], hash
+            if nakade_hash[nakade_num - 3][i] == hash:
+                return True
+
+    return False
+
 
 def find_nakade_pos(state, pos, color):
     cdef int size = 0
@@ -187,7 +238,7 @@ def find_nakade_pos(state, pos, color):
 
     if nakade_num in (3, 4, 5, 6):
         for i in xrange(NAKADE_PATTERNS[nakade_num - 3]):
-            print nakade_hash[nakade_num - 3][i], hash
+            print i, nakade_hash[nakade_num - 3][i], hash
             if nakade_hash[nakade_num - 3][i] == hash:
                 return nakade[0] + nakade_pos[nakade_num - 3][i]
 

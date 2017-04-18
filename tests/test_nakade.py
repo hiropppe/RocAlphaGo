@@ -11,6 +11,84 @@ class TestNakade(unittest.TestCase):
     def setup_class(clazz):
         nakade.initialize_hash()
 
+    def test_is_nakade_self_atari_3_0(self):
+        board = \
+        "B B a . W B . . . . . . . . . . . . .|" + \
+        "W W W W W B . . . . . . . . . . . . .|" + \
+        "B B B B B . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|"
+
+        st, moves = parseboard.parse(board)
+
+        self._assert_nakade_self_atari(st, moves['a'], BLACK)
+
+    def test_is_nakade_self_atari_4_0(self):
+        board = \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . B . . .|" + \
+        ". . . . . . . . . . . . . . . . B B .|" + \
+        ". . . . . . . . . . . . . . B B W W W|" + \
+        ". . . . . . . . . . . . . B . W W a .|" + \
+        ". . . . . . . . . . . . . . . W B B B|"
+
+        st, moves = parseboard.parse(board)
+
+        self._assert_nakade_self_atari(st, moves['a'], BLACK)
+
+    def test_is_nakade_self_atari_5_0(self):
+        board = \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . . . . .|" + \
+        ". . . . . . . . . . . . . . . B B B .|" + \
+        ". . . . . . . . . . . . . B B W W W W|" + \
+        ". . . . . . . . . . . . B . W W B . W|" + \
+        ". . . . . . . . . . . . B . W B B a W|" + \
+        ". . . . . . . . . . . . . . W W B W W|"
+
+        st, moves = parseboard.parse(board)
+
+        self._assert_nakade_self_atari(st, moves['a'], BLACK)
+
     def test_nakade3_0(self):
         board = \
         ". B B B B B . . . . . . . . . . . . .|" + \
@@ -660,6 +738,11 @@ class TestNakade(unittest.TestCase):
         st, moves = parseboard.parse(board)
 
         self._assert_vital_point(st, WHITE, moves['a'], moves['b'])
+
+    def _assert_nakade_self_atari(self, st, self_atari_move, color):
+        pos = self_atari_move[0]*19+self_atari_move[1]
+        is_nakade_self_atari = nakade.is_nakade_self_atari(st, pos, color)
+        self.assertTrue(is_nakade_self_atari)
 
     def _assert_vital_point(self, st, last_color, last_move, expected_vital_point):
         st.current_player = last_color
