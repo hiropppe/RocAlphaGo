@@ -775,7 +775,8 @@ class TestNakade(unittest.TestCase):
     def _assert_vital_point(self, st, last_color, last_move, expected_vital_point):
         st.current_player = last_color
         st.do_move(last_move)
-        vital_point = nakade.search_nakade(st)
+        (vital_point, nakade_id) = nakade.search_nakade(st)
+        print vital_point, nakade_id
         self.assertTrue(divmod(vital_point, 19) == expected_vital_point)
 
 

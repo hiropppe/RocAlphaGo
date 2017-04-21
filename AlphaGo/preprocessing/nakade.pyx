@@ -3,6 +3,7 @@
 
 import numpy as np
 
+import itertools
 import sys
 
 from Queue import Queue
@@ -52,6 +53,7 @@ NAKADE_PATTERNS[3] = NAKADE_6
 cdef int NAKADE_MAX_SIZE = NAKADE_5
 
 cdef unsigned long long[4][9] nakade_hash
+
 cdef int[4][9] nakade_pos
 
 cdef int start = BOARD_MAX / 2 
@@ -60,6 +62,9 @@ cdef int[6][3] nakade3  # nakade3 pat
 cdef int[5][4] nakade4  # nakade4 pat
 cdef int[9][5] nakade5  # nakade5 pat
 cdef int[4][6] nakade6  # nakade6 pat
+
+cdef int[13] string_pat
+cdef unordered_map[long long, int] string_hashmap
 
 ctypedef uniform_int_distribution[long long] int_dist
 
@@ -99,6 +104,139 @@ cdef onboard(int x, int y):
     return 0 <= x and x < 19 and 0 <= y and y < 19
 
 
+def initialize_hash():
+
+    for i in xrange(BOARD_MAX):
+        hash_bit[i][HASH_PASS] = mt() 
+        hash_bit[i][HASH_BLACK] = mt()
+        hash_bit[i][HASH_WHITE] = mt()
+        hash_bit[i][HASH_KO] = mt()
+        shape_bit[i] = mt()
+
+    nakade3[0][0] = -1; nakade3[0][1] = 0;              nakade3[0][2] = 1;
+    nakade3[1][0] = -board_size; nakade3[1][1] = 0;     nakade3[1][2] = board_size;
+    nakade3[2][0] = -1; nakade3[2][1] = 0;              nakade3[2][2] = board_size;
+    nakade3[3][0] = -board_size; nakade3[3][1] = 0;     nakade3[3][2] = -1;
+    nakade3[4][0] = -board_size; nakade3[4][1] = 0;     nakade3[4][2] = 1;
+    nakade3[5][0] = 1; nakade3[5][1] = 0;              nakade3[5][2] = board_size;
+
+    nakade4[0][0] = 0;              nakade4[0][1] = board_size-1;
+    nakade4[0][2] = board_size;     nakade4[0][3] = board_size + 1;
+    nakade4[1][0] = -board_size;    nakade4[1][1] = - 1;
+    nakade4[1][2] = 0;              nakade4[1][3] = board_size;
+    nakade4[2][0] = -board_size;    nakade4[2][1] = 0;
+    nakade4[2][2] = 1;              nakade4[2][3] = board_size;
+    nakade4[3][0] = -1;             nakade4[3][1] = 0;
+    nakade4[3][2] = 1;              nakade4[3][3] = board_size;
+    nakade4[4][0] = 0;              nakade4[4][1] = 1;
+    nakade4[4][2] = board_size;     nakade4[4][3] = board_size + 1;
+
+    nakade5[0][0] = -board_size;        nakade5[0][1] = - 1; nakade5[0][2] = 0;
+    nakade5[0][3] = 1;     nakade5[0][4] = board_size;
+    nakade5[1][0] = -board_size;                  nakade5[1][1] = - 1; nakade5[1][2] = 0;
+    nakade5[1][3] = board_size - 1; nakade5[1][4] = board_size;
+    nakade5[2][0] = -1;                  nakade5[2][1] = 0;              nakade5[2][2] = board_size-1;
+    nakade5[2][3] = board_size;     nakade5[2][4] = board_size + 1;
+    nakade5[3][0] = -board_size;                  nakade5[3][1] = -board_size+1;              nakade5[3][2] = 0;
+    nakade5[3][3] = 1;     nakade5[3][4] = board_size;
+    nakade5[4][0] = -1;                  nakade5[4][1] = 0;              nakade5[4][2] = 1;
+    nakade5[4][3] = board_size;     nakade5[4][4] = board_size + 1;
+    nakade5[5][0] = -board_size;                  nakade5[5][1] = 0;     nakade5[5][2] = 1;
+    nakade5[5][3] = board_size;     nakade5[5][4] = board_size + 1;
+    nakade5[6][0] = -1;                  nakade5[6][1] = 0;              nakade5[6][2] = 1;
+    nakade5[6][3] = board_size-1;         nakade5[6][4] = board_size;
+    nakade5[7][0] = -board_size;                  nakade5[7][1] = -board_size+1;              nakade5[7][2] = 0;
+    nakade5[7][3] = 1;     nakade5[7][4] = board_size + 1;
+    nakade5[8][0] = 0;                  nakade5[8][1] = 1;              nakade5[8][2] = board_size - 1;
+    nakade5[8][3] = board_size;         nakade5[8][4] = board_size + 1;
+
+    nakade6[0][0] = -board_size;                  nakade6[0][1] = - 1;
+    nakade6[0][2] = 0;         nakade6[0][3] = 1;
+    nakade6[0][4] = board_size - 1; nakade6[0][5] = board_size;
+    nakade6[1][0] = -board_size-1;                  nakade6[1][1] = -board_size;
+    nakade6[1][2] = -1;         nakade6[1][3] = 0;
+    nakade6[1][4] = 1;     nakade6[1][5] = board_size-1;
+    nakade6[2][0] = -board_size;                  nakade6[2][1] = -board_size+1;
+    nakade6[2][2] = - 1;     nakade6[2][3] = 0;
+    nakade6[2][4] = 1;     nakade6[2][5] = board_size;
+    nakade6[3][0] = -board_size;                  nakade6[3][1] = - 1;
+    nakade6[3][2] = 0;         nakade6[3][3] = 1;
+    nakade6[3][4] = board_size;     nakade6[3][5] = board_size + 1;
+
+    nakade_pos[0][0] = 0;
+    nakade_pos[0][1] = 0;
+    nakade_pos[0][2] = 0;
+    nakade_pos[0][3] = 0;
+    nakade_pos[0][4] = 0;
+    nakade_pos[0][5] = 0;
+
+    nakade_pos[1][0] = board_size;
+    nakade_pos[1][1] = 0;
+    nakade_pos[1][2] = 0;
+    nakade_pos[1][3] = 0;
+    nakade_pos[1][4] = 0;
+
+    nakade_pos[2][0] = 0;
+    nakade_pos[2][1] = 0;
+    nakade_pos[2][2] = board_size;
+    nakade_pos[2][3] = 0;
+    nakade_pos[2][4] = 0;
+    nakade_pos[2][5] = 0;
+    nakade_pos[2][6] = 0;
+    nakade_pos[2][7] = 1;
+    nakade_pos[2][8] = board_size;
+
+    nakade_pos[3][0] = 0;
+    nakade_pos[3][1] = 0;
+    nakade_pos[3][2] = 0;
+    nakade_pos[3][3] = 0;
+
+    # initialize nakade shape hash
+    for i in xrange(NAKADE_3):
+        nakade_hash[0][i] = 0
+        for j in range(3):
+            nakade_hash[0][i] ^= shape_bit[start + nakade3[i][j]]
+
+    for i in xrange(NAKADE_4):
+        nakade_hash[1][i] = 0
+        for j in xrange(4):
+            nakade_hash[1][i] ^= shape_bit[start + nakade4[i][j]]
+
+    for i in xrange(NAKADE_5):
+        nakade_hash[2][i] = 0
+        for j in xrange(5):
+            nakade_hash[2][i] ^= shape_bit[start + nakade5[i][j]]
+
+    for i in xrange(NAKADE_6):
+        nakade_hash[3][i] = 0
+        for j in xrange(6):
+            nakade_hash[3][i] ^= shape_bit[start + nakade6[i][j]]
+
+    # initialize 13 point string shape hash
+    cdef unsigned long long string_hash
+
+    string_pat[0] = -board_size*2
+    string_pat[1] = -board_size-1
+    string_pat[2] = -board_size
+    string_pat[3] = -board_size+1
+    string_pat[4] = -2
+    string_pat[5] = -1
+    string_pat[6] = 0
+    string_pat[7] = 1
+    string_pat[8] = 2
+    string_pat[9] = board_size-1
+    string_pat[10] = board_size
+    string_pat[11] = board_size+1
+    string_pat[12] = board_size*2
+
+    for i, stone_pattern in enumerate(itertools.product((0,1), repeat=13)):
+        string_hash = 0
+        for j, stone in enumerate(stone_pattern):
+            if stone:
+                string_hash ^= shape_bit[start + string_pat[j]]
+        string_hashmap[string_hash] = i
+
+
 def search_nakade(state):
     cdef int last_color
     cdef int last_pos
@@ -118,10 +256,10 @@ def search_nakade(state):
             (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
             # print 'Search', ny, nx
             if state.board[ny, nx] != last_color:
-                nakade_pos = find_nakade_pos(state, neighbor4[i], last_color)
+                (nakade_pos, nakade_id) = find_nakade_pos(state, neighbor4[i], last_color)
                 if nakade_pos > -1:
                     # print 'Vital point of nakade', divmod(nakade_pos, 19)
-                    return nakade_pos
+                    return (nakade_pos, nakade_id)
 
 
 def is_nakade_self_atari(state, pos, color):
@@ -206,7 +344,7 @@ def find_nakade_pos(state, pos, color):
 
         if size > 5:
             # print 'exit', size
-            return -1
+            return (-1, -1)
 
         set_neighbor4(neighbor4, current_pos)
 
@@ -225,151 +363,23 @@ def find_nakade_pos(state, pos, color):
     # print 'nakade_num', nakade_num
     if nakade_num > 6:
         # print 'nakade_num exceed threshold', size
-        return -1
+        return (-1, -1)
 
     nakade.sort()
     nakade = nakade[-nakade_num:]
-    # print 'sorted nakade shape', nakade
+    print 'sorted nakade shape', nakade
 
     # centering pattern
     reviser = start - nakade[0]
     for i in xrange(nakade_num):
-        # print 'reivised shape pos', (nakade[i] + reviser)
+        print 'reivised shape pos', (nakade[i] + reviser)
         hash ^= shape_bit[nakade[i] + reviser]
 
     if nakade_num in (3, 4, 5, 6):
         for i in xrange(NAKADE_PATTERNS[nakade_num - 3]):
-            # print i, nakade_hash[nakade_num - 3][i], hash
+            print i, nakade_hash[nakade_num - 3][i], hash
             if nakade_hash[nakade_num - 3][i] == hash:
-                # print nakade_num, i, nakade_hash[nakade_num - 3][i], hash
-                return nakade[0] + nakade_pos[nakade_num - 3][i]
+                print nakade_num, i, nakade_hash[nakade_num - 3][i], hash
+                return (nakade[0] + nakade_pos[nakade_num - 3][i], string_hashmap[hash])
 
-    return -1
-    
-
-def initialize_hash():
-
-    for i in xrange(BOARD_MAX):
-        hash_bit[i][HASH_PASS] = mt() 
-        hash_bit[i][HASH_BLACK] = mt()
-        hash_bit[i][HASH_WHITE] = mt()
-        hash_bit[i][HASH_KO] = mt()
-        shape_bit[i] = mt()
-
-    nakade3[0][0] = 0; nakade3[0][1] = 1;              nakade3[0][2] = 2;
-    nakade3[1][0] = 0; nakade3[1][1] = board_size;     nakade3[1][2] = 2 * board_size;
-    nakade3[2][0] = 0; nakade3[2][1] = 1;              nakade3[2][2] = board_size + 1;
-    nakade3[3][0] = 0; nakade3[3][1] = board_size - 1; nakade3[3][2] = board_size;
-    nakade3[4][0] = 0; nakade3[4][1] = board_size;     nakade3[4][2] = board_size + 1;
-    nakade3[5][0] = 0; nakade3[5][1] = 1;              nakade3[5][2] = board_size;
-
-    nakade4[0][0] = 0;              nakade4[0][1] = board_size - 1;
-    nakade4[0][2] = board_size;     nakade4[0][3] = board_size + 1;
-    nakade4[1][0] = 0;              nakade4[1][1] = board_size - 1;
-    nakade4[1][2] = board_size;     nakade4[1][3] = 2 * board_size;
-    nakade4[2][0] = 0;              nakade4[2][1] = board_size;
-    nakade4[2][2] = board_size + 1; nakade4[2][3] = 2 * board_size;
-    nakade4[3][0] = 0;              nakade4[3][1] = 1;
-    nakade4[3][2] = 2;              nakade4[3][3] = board_size + 1;
-    nakade4[4][0] = 0;              nakade4[4][1] = 1;
-    nakade4[4][2] = board_size;     nakade4[4][3] = board_size + 1;
-
-    nakade5[0][0] = 0;                  nakade5[0][1] = board_size - 1; nakade5[0][2] = board_size;
-    nakade5[0][3] = board_size + 1;     nakade5[0][4] = 2 * board_size;
-    nakade5[1][0] = 0;                  nakade5[1][1] = board_size - 1; nakade5[1][2] = board_size;
-    nakade5[1][3] = 2 * board_size - 1; nakade5[1][4] = 2 * board_size;
-    nakade5[2][0] = 0;                  nakade5[2][1] = 1;              nakade5[2][2] = board_size;
-    nakade5[2][3] = board_size + 1;     nakade5[2][4] = board_size + 2;
-    nakade5[3][0] = 0;                  nakade5[3][1] = 1;              nakade5[3][2] = board_size;
-    nakade5[3][3] = board_size + 1;     nakade5[3][4] = 2 * board_size;
-    nakade5[4][0] = 0;                  nakade5[4][1] = 1;              nakade5[4][2] = 2;
-    nakade5[4][3] = board_size + 1;     nakade5[4][4] = board_size + 2;
-    nakade5[5][0] = 0;                  nakade5[5][1] = board_size;     nakade5[5][2] = board_size + 1;
-    nakade5[5][3] = 2 * board_size;     nakade5[5][4] = 2 * board_size + 1;
-    nakade5[6][0] = 0;                  nakade5[6][1] = 1;              nakade5[6][2] = 2;
-    nakade5[6][3] = board_size;         nakade5[6][4] = board_size + 1;
-    nakade5[7][0] = 0;                  nakade5[7][1] = 1;              nakade5[7][2] = board_size;
-    nakade5[7][3] = board_size + 1;     nakade5[7][4] = 2 * board_size + 1;
-    nakade5[8][0] = 0;                  nakade5[8][1] = 1;              nakade5[8][2] = board_size - 1;
-    nakade5[8][3] = board_size;         nakade5[8][4] = board_size + 1;
-
-    nakade6[0][0] = 0;                  nakade6[0][1] = board_size - 1;
-    nakade6[0][2] = board_size;         nakade6[0][3] = board_size + 1;
-    nakade6[0][4] = 2 * board_size - 1; nakade6[0][5] = 2 * board_size;
-    nakade6[1][0] = 0;                  nakade6[1][1] = 1;
-    nakade6[1][2] = board_size;         nakade6[1][3] = board_size + 1;
-    nakade6[1][4] = board_size + 2;     nakade6[1][5] = 2 * board_size;
-    nakade6[2][0] = 0;                  nakade6[2][1] = 1;
-    nakade6[2][2] = board_size - 1;     nakade6[2][3] = board_size;
-    nakade6[2][4] = board_size + 1;     nakade6[2][5] = 2 * board_size;
-    nakade6[3][0] = 0;                  nakade6[3][1] = board_size - 1;
-    nakade6[3][2] = board_size;         nakade6[3][3] = board_size + 1;
-    nakade6[3][4] = 2 * board_size;     nakade6[3][5] = 2 * board_size + 1;
-
-    nakade_pos[0][0] = 1;
-    nakade_pos[0][1] = board_size;
-    nakade_pos[0][2] = 1;
-    nakade_pos[0][3] = board_size;
-    nakade_pos[0][4] = board_size;
-    nakade_pos[0][5] = 0;
-
-    nakade_pos[1][0] = board_size;
-    nakade_pos[1][1] = board_size;
-    nakade_pos[1][2] = board_size;
-    nakade_pos[1][3] = 1;
-    nakade_pos[1][4] = 0;
-
-    nakade_pos[2][0] = board_size;
-    nakade_pos[2][1] = board_size;
-    nakade_pos[2][2] = board_size + 1;
-    nakade_pos[2][3] = board_size;
-    nakade_pos[2][4] = 1;
-    nakade_pos[2][5] = board_size;
-    nakade_pos[2][6] = 1;
-    nakade_pos[2][7] = board_size + 1;
-    nakade_pos[2][8] = board_size;
-
-    nakade_pos[3][0] = board_size;
-    nakade_pos[3][1] = board_size + 1;
-    nakade_pos[3][2] = board_size;
-    nakade_pos[3][3] = board_size;
-
-    for i in xrange(NAKADE_3):
-        nakade_hash[0][i] = 0
-        for j in range(3):
-            nakade_hash[0][i] ^= shape_bit[start + nakade3[i][j]]
-
-    for i in xrange(NAKADE_4):
-        nakade_hash[1][i] = 0
-        for j in xrange(4):
-            nakade_hash[1][i] ^= shape_bit[start + nakade4[i][j]]
-
-    for i in xrange(NAKADE_5):
-        nakade_hash[2][i] = 0
-        for j in xrange(5):
-            nakade_hash[2][i] ^= shape_bit[start + nakade5[i][j]]
-
-    for i in xrange(NAKADE_6):
-        nakade_hash[3][i] = 0
-        for j in xrange(6):
-            nakade_hash[3][i] ^= shape_bit[start + nakade6[i][j]]
-
-
-def sgftest(search_name=None):
-    initialize_hash()
-    import glob
-    from AlphaGo.util import sgf_iter_states
-    if not search_name:
-        search_name = '../dataset/kihuu/*.sgf'
-    for file_name in glob.glob(search_name):
-        try:
-            with open(file_name, 'r')  as file_object:
-                state_action_iterator = sgf_iter_states(file_object.read(), include_end=False)
-
-            for i, (state, move, player) in enumerate(state_action_iterator):
-                nakade_pos = search_nakade(state)
-                if nakade_pos:
-                    print file_name
-                    return
-        except:
-            pass
+    return (-1, -1)

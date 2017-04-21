@@ -11,6 +11,7 @@ from libcpp.pair cimport pair
 from libcpp.vector cimport vector
 from libcpp.unordered_map cimport unordered_map
 
+from AlphaGo.preprocessing import nakade
 
 DTYPE = np.int
 
@@ -58,6 +59,7 @@ cdef class RolloutFeature(object):
         self.n_response = 1
         self.n_save_atari = 1
         self.n_neighbor = 8
+        self.n_nakade = 8192
         self.n_3x3 = 4500
         self.n_12d = 2300
 
@@ -70,12 +72,14 @@ cdef class RolloutFeature(object):
                 with open(f_pattern_12d) as f:
                     self.pattern_12d = ast.literal_eval(f.read())
 
-        self.n_feature = self.n_response + self.n_save_atari + self.n_neighbor + self.n_3x3 + self.n_12d
+        self.n_feature = (self.n_response + self.n_save_atari + self.n_neighbor +
+                          self.n_nakade + self.n_3x3 + self.n_12d)
 
         self.ix_response = 0
         self.ix_save_atari = self.ix_response + self.n_response
         self.ix_neighbor = self.ix_save_atari + self.n_save_atari
-        self.ix_3x3 = self.ix_neighbor + self.n_neighbor
+        self.ix_nakade = self.ix_neighbor + self.n_neighbor
+        self.ix_3x3 = self.ix_nakade + self.n_nakade
         self.ix_12d = self.ix_3x3 + self.n_3x3
 
         self._create_neighbor8_cache()
@@ -86,6 +90,8 @@ cdef class RolloutFeature(object):
         self._prev_neighbors.second = iy
 
         self.prev_board = np.zeros((b_size, b_size), dtype=np.int)
+
+        nakade.initialize_hash()
 
     def _create_neighbor8_cache(self):
         for x in xrange(self.b_size):
@@ -144,19 +150,25 @@ cdef class RolloutFeature(object):
     def update(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         """
         """
-        cdef int px, py, prev_position
+        cdef int prev_row, prev_col, prev_position
 
-        if state.history:
+        if state.history and state.history[-1] is not None:
             prev_move = state.history[-1]
             if prev_move:
-                (px, py) = prev_move
-                prev_position = px*self.b_size+py
+                (prev_row, prev_col) = prev_move
+                prev_position = prev_row*self.b_size+prev_col
         else:
             prev_position = -1
 
         self.update_neighbors(prev_position, feature)
         self.update_save_atari(state, feature)
         self.update_non_response_3x3(state, feature)
+        self.update_nakade(state, feature)
+
+    def update_nakade(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+        feature[:, self.ix_nakade:self.ix_3x3] = 0
+        (row, col) = nakade.search_nakade(state)
+        feature[row, self.ix_nakade + col] = 1
 
     def update_neighbors(self, prev_position, np.ndarray[DTYPE_t, ndim=2] feature):
         """
