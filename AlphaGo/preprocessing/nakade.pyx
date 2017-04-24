@@ -192,6 +192,7 @@ def initialize_hash():
     nakade_pos[3][2] = board_size;
     nakade_pos[3][3] = board_size;
 
+    # reviser for fitting 13 point start
     nakade_reviser[0][0] = -1;
     nakade_reviser[0][1] = -board_size;
     nakade_reviser[0][2] = -board_size - 1;
@@ -277,18 +278,17 @@ def search_nakade(state):
     last_move = state.history[-1]
     last_pos = last_move[0]*BOARD_SIZE+last_move[1]
     last_color = state.board[last_move[0], last_move[1]]
-    # print 'last', last_move, last_color
+
     set_neighbor4(neighbor4, last_pos)
 
     for i in xrange(4):
         if neighbor4[i] != -1:
             (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
-            # print 'Search', ny, nx
             if state.board[ny, nx] != last_color:
                 (nakade_pos, nakade_id) = find_nakade_pos(state, neighbor4[i], last_color)
                 if nakade_pos > -1:
-                    # print 'Vital point of nakade', divmod(nakade_pos, 19)
                     return (nakade_pos, nakade_id)
+    return (-1, -1)
 
 
 def is_nakade_self_atari(state, pos, color):
@@ -320,16 +320,14 @@ def is_nakade_self_atari(state, pos, color):
     nakade[nakade_num] = pos
     nakade_num += 1
 
-    # print 'nakade_num', nakade_num
     if nakade_num > 6:
-        # print 'nakade_num exceed threshold', nakade_num 
         return -1
 
     nakade.sort()
     nakade = nakade[-nakade_num:]
     # print 'sorted nakade shape', nakade
 
-    # get nakade shape center pos
+    # get center of nakade shape
     row_len = nakade[-1] / BOARD_SIZE - nakade[0] / BOARD_SIZE + 1
     col_idx = nakade % 19
     col_idx.sort()
@@ -339,7 +337,6 @@ def is_nakade_self_atari(state, pos, color):
     center_pos = zero_pos + (row_len / 2) * BOARD_SIZE + (col_len / 2)
 
     # centering pattern
-    # reviser = start - nakade[0]
     reviser = start - center_pos
     for i in xrange(nakade_num):
         # print 'reivised shape pos', (nakade[i] + reviser)
@@ -347,7 +344,7 @@ def is_nakade_self_atari(state, pos, color):
 
     if nakade_num in (3, 4, 5, 6):
         for i in xrange(NAKADE_PATTERNS[nakade_num - 3]):
-            # print i, nakade_hash[nakade_num - 3][i], hash
+            # print nakade_num, i, nakade_hash[nakade_num - 3][i], hash
             if nakade_hash[nakade_num - 3][i] == hash:
                 return True
 
@@ -357,14 +354,11 @@ def is_nakade_self_atari(state, pos, color):
 def find_nakade_pos(state, pos, color):
     cdef int size = 0
     cdef bool[361] flag
-    # cdef int[10] nakade = [0]*10
     cdef np.ndarray nakade = np.zeros((10,), dtype=np.int)
     cdef int nakade_num = 0
     cdef unsigned long long hash = 0
     cdef int[4] neighbor4
     cdef int nx, ny, npos
-
-    # nakadebug = list()
 
     nakade_queue = Queue()
     nakade_queue.put(pos)
@@ -373,16 +367,13 @@ def find_nakade_pos(state, pos, color):
     flag[pos] = True
 
     board = state.board
-    # print board
+
     while not nakade_queue.empty():
         current_pos = nakade_queue.get()
         nakade[nakade_num] = current_pos
         nakade_num += 1
-        # nakadebug.append(divmod(current_pos, 19))
-        # print nakadebug
 
         if size > 5:
-            # print 'exit', size
             return (-1, -1)
 
         set_neighbor4(neighbor4, current_pos)
@@ -392,23 +383,19 @@ def find_nakade_pos(state, pos, color):
                 npos = neighbor4[i]
                 (ny, nx) = divmod(neighbor4[i], BOARD_SIZE)
                 nc = board[ny, nx]
-                # print (ny, nx), nc, flag[npos], color, (nc == 0 or nc != color)
                 if not flag[npos] and (nc == 0 or nc != color):
-                    # print 'append', flag[npos], neighbor4[i]
                     nakade_queue.put(npos)
                     flag[npos] = True
                     size += 1
 
-    # print 'nakade_num', nakade_num
     if nakade_num > 6:
-        # print 'nakade_num exceed threshold', size
         return (-1, -1)
 
     nakade.sort()
     nakade = nakade[-nakade_num:]
     # print 'sorted nakade shape', nakade
 
-    # get nakade shape center pos
+    # get center of nakade shape
     row_len = nakade[-1] / BOARD_SIZE - nakade[0] / BOARD_SIZE + 1
     col_idx = nakade % 19
     col_idx.sort()
@@ -418,7 +405,6 @@ def find_nakade_pos(state, pos, color):
     center_pos = zero_pos + (row_len / 2) * BOARD_SIZE + (col_len / 2)
 
     # centering pattern
-    # reviser = start - nakade[0]
     reviser = start - center_pos
     for i in xrange(nakade_num):
         # print 'reivised shape pos', (nakade[i] + reviser)
@@ -426,9 +412,8 @@ def find_nakade_pos(state, pos, color):
 
     if nakade_num in (3, 4, 5, 6):
         for i in xrange(NAKADE_PATTERNS[nakade_num - 3]):
-            # print i, nakade_hash[nakade_num - 3][i], hash
+            # print nakade_num, i, nakade_hash[nakade_num - 3][i], hash
             if nakade_hash[nakade_num - 3][i] == hash:
-                # print nakade_num, i, nakade_hash[nakade_num - 3][i], hash
                 return (nakade[0] + nakade_pos[nakade_num - 3][i], string_hashmap[hash])
 
     return (-1, -1)

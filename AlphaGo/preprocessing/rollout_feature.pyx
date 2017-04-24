@@ -167,8 +167,9 @@ cdef class RolloutFeature(object):
 
     def update_nakade(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         feature[:, self.ix_nakade:self.ix_3x3] = 0
-        (row, col) = nakade.search_nakade(state)
-        feature[row, self.ix_nakade + col] = 1
+        (pos, shape_id) = nakade.search_nakade(state)
+        if pos != -1:
+            feature[pos, self.ix_nakade + shape_id] = 1
 
     def update_neighbors(self, prev_position, np.ndarray[DTYPE_t, ndim=2] feature):
         """
