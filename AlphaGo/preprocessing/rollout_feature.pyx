@@ -34,13 +34,14 @@ cdef class RolloutFeature(object):
     cdef public int ix_response
     cdef public int ix_save_atari
     cdef public int ix_neighbor
+    cdef public int ix_nakade
     cdef public int ix_3x3
     cdef public int ix_12d
 
     cdef int n_response
     cdef int n_save_atari
     cdef int n_neighbor
-
+    cdef int n_nakade
     cdef int n_3x3
     cdef int n_12d
 
@@ -162,14 +163,9 @@ cdef class RolloutFeature(object):
 
         self.update_neighbors(prev_position, feature)
         self.update_save_atari(state, feature)
+        self.update_response_12d(state, feature)
         self.update_non_response_3x3(state, feature)
         self.update_nakade(state, feature)
-
-    def update_nakade(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
-        feature[:, self.ix_nakade:self.ix_3x3] = 0
-        (pos, shape_id) = nakade.search_nakade(state)
-        if pos != -1:
-            feature[pos, self.ix_nakade + shape_id] = 1
 
     def update_neighbors(self, prev_position, np.ndarray[DTYPE_t, ndim=2] feature):
         """
@@ -201,6 +197,19 @@ cdef class RolloutFeature(object):
                     if (state.board[nx, ny] == state.current_player
                        and state.liberty_counts[nx, ny] > 1):
                         feature[x*self.b_size + y, self.ix_save_atari] = 1
+
+    def update_nakade(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+        """
+        """
+        feature[:, self.ix_nakade:self.ix_3x3] = 0
+        (pos, shape_id) = nakade.search_nakade(state)
+        if pos != -1:
+            feature[pos, self.ix_nakade + shape_id] = 1
+
+    def update_response_12d(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+        """
+        """
+        pass
 
     def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         """
