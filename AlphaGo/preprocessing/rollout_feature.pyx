@@ -29,31 +29,37 @@ cdef class RolloutFeature(object):
     cdef public int n_feature
 
     cdef public unordered_map[long long, int] pattern_3x3
-    cdef public unordered_map[long long, int] pattern_12d
+    cdef pattern_d12
+    # cdef public unordered_map[long long, int] pattern_d12
 
     cdef public int ix_response
     cdef public int ix_save_atari
     cdef public int ix_neighbor
     cdef public int ix_nakade
     cdef public int ix_3x3
-    cdef public int ix_12d
+    cdef public int ix_d12
 
     cdef int n_response
     cdef int n_save_atari
     cdef int n_neighbor
     cdef int n_nakade
     cdef int n_3x3
-    cdef int n_12d
+    cdef int n_d12
 
     cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR4_INDEX_CACHE
     cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_INDEX_CACHE
     cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_FEATURE_CACHE
+    cdef unordered_map[int, pair[vector[int], vector[int]]] __D12_INDEX_CACHE
 
     cdef pair[vector[int], vector[int]] _prev_neighbors
 
     cdef np.ndarray prev_board
 
-    def __init__(self, b_size, f_pattern_3x3=None, f_pattern_12d=None):
+    cdef public int hit_nakade
+    cdef public int hit_3x3
+    cdef public int hit_d12
+
+    def __init__(self, b_size, f_pattern_3x3=None, f_pattern_d12=None):
         self.b_size = b_size
         self.n_position = self.b_size * self.b_size
 
@@ -62,26 +68,26 @@ cdef class RolloutFeature(object):
         self.n_neighbor = 8
         self.n_nakade = 8192
         self.n_3x3 = 4500
-        self.n_12d = 2300
+        self.n_d12 = 2300
 
-        if f_pattern_3x3 or f_pattern_12d:
+        if f_pattern_3x3 or f_pattern_d12:
             import ast
             if f_pattern_3x3:
                 with open(f_pattern_3x3) as f:
                     self.pattern_3x3 = ast.literal_eval(f.read())
-            if f_pattern_12d:
-                with open(f_pattern_12d) as f:
-                    self.pattern_12d = ast.literal_eval(f.read())
+            if f_pattern_d12:
+                with open(f_pattern_d12) as f:
+                    self.pattern_d12 = ast.literal_eval(f.read())
 
         self.n_feature = (self.n_response + self.n_save_atari + self.n_neighbor +
-                          self.n_nakade + self.n_3x3 + self.n_12d)
+                          self.n_nakade + self.n_3x3 + self.n_d12)
 
         self.ix_response = 0
         self.ix_save_atari = self.ix_response + self.n_response
         self.ix_neighbor = self.ix_save_atari + self.n_save_atari
         self.ix_nakade = self.ix_neighbor + self.n_neighbor
         self.ix_3x3 = self.ix_nakade + self.n_nakade
-        self.ix_12d = self.ix_3x3 + self.n_3x3
+        self.ix_d12 = self.ix_3x3 + self.n_3x3
 
         self._create_neighbor8_cache()
 
@@ -94,11 +100,17 @@ cdef class RolloutFeature(object):
 
         nakade.initialize_hash()
 
+    def reset(self):
+        self.prev_board = np.zeros((self.b_size, self.b_size), dtype=np.int)
+        self.hit_nakade = 0
+        self.hit_3x3 = 0
+        self.hit_d12 = 0
+
     def _create_neighbor8_cache(self):
         for x in xrange(self.b_size):
             for y in xrange(self.b_size):
                 position = x*self.b_size+y
-                (fx, fy) = self._get_neighbor8_feature((x, y))
+                (fx, fy) = self._get_neighbor8_feature_index((x, y))
                 self.__NEIGHBOR8_FEATURE_CACHE[position].first = fx
                 self.__NEIGHBOR8_FEATURE_CACHE[position].second = fy
                 # cache neighbor4
@@ -109,6 +121,10 @@ cdef class RolloutFeature(object):
                 (ix8, iy8) = self._get_neighbor8_index((x, y))
                 self.__NEIGHBOR8_INDEX_CACHE[position].first = ix8
                 self.__NEIGHBOR8_INDEX_CACHE[position].second = iy8
+                # cache 12 point diamond
+                (ix_d12, iy_d12) = self._get_d12_index((x, y))
+                self.__D12_INDEX_CACHE[position].first = ix_d12
+                self.__D12_INDEX_CACHE[position].second = iy_d12
 
     def _get_neighbor4_index(self, center):
         """Returns neighbor8 index pair ([r0, r1, r2, r3], [c0, c1, c2, c3])
@@ -124,12 +140,19 @@ cdef class RolloutFeature(object):
         xy = np.array(neighbors)
         return (list(xy[:, 0]), list(xy[:, 1]))
 
-    def _get_neighbor8_feature(self, center):
+    def _get_neighbor8_feature_index(self, center):
         """Returns nenighbor feature index ([np0, np1, .., np7], [ni0, ni1, .., ni7])
         """
         neighbors = self._get_neighbor8(center)
         xy = np.array([[nx*self.b_size + ny, self.ix_neighbor+i]
                        for i, (nx, ny) in enumerate(neighbors) if self._on_board((nx, ny))])
+        return (list(xy[:, 0]), list(xy[:, 1]))
+
+    def _get_d12_index(self, center):
+        """Returns 12 point diamond index pair ([r0, r1, .., r11], [c0, c1, .., c11])
+        """
+        neighbors = self._get_d12(center)
+        xy = np.array(neighbors)
         return (list(xy[:, 0]), list(xy[:, 1]))
 
     def _get_neighbor4(self, center):
@@ -144,6 +167,14 @@ cdef class RolloutFeature(object):
                 (x,   y-1),           (x,   y+1),
                 (x+1, y-1), (x+1, y), (x+1, y+1)]
 
+    def _get_d12(self, center):
+        (x, y) = center
+        return [                      (x-2, y),
+                          (x-1, y-1), (x-1, y), (x-1, y+1),
+                (x, y-2), (x,   y-1),           (x,   y+1), (x, y+2),
+                          (x+1, y-1), (x+1, y), (x+1, y+1),
+                                      (x+2, y)                      ]
+
     def _on_board(self, position):
         (x, y) = position
         return x >= 0 and y >= 0 and x < self.b_size and y < self.b_size
@@ -151,19 +182,19 @@ cdef class RolloutFeature(object):
     def update(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         """
         """
-        cdef int prev_row, prev_col, prev_position
+        cdef int px, py, pp
 
         if state.history and state.history[-1] is not None:
-            prev_move = state.history[-1]
-            if prev_move:
-                (prev_row, prev_col) = prev_move
-                prev_position = prev_row*self.b_size+prev_col
+            pm = state.history[-1]
+            if pm:
+                (px, py) = pm
+                pp = px*self.b_size+py
         else:
-            prev_position = -1
+            pp = -1
 
-        self.update_neighbors(prev_position, feature)
+        self.update_neighbors(pp, feature)
         self.update_save_atari(state, feature)
-        self.update_response_12d(state, feature)
+        self.update_response_d12(state, feature)
         self.update_non_response_3x3(state, feature)
         self.update_nakade(state, feature)
 
@@ -204,12 +235,81 @@ cdef class RolloutFeature(object):
         feature[:, self.ix_nakade:self.ix_3x3] = 0
         (pos, shape_id) = nakade.search_nakade(state)
         if pos != -1:
+            self.hit_nakade += 1
             feature[pos, self.ix_nakade + shape_id] = 1
 
-    def update_response_12d(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
+    def update_response_d12(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         """
         """
-        pass
+        #cdef unsigned long long pattern = 0
+        #cdef unsigned long long pattern_by_location
+        cdef vector[int] ix_d12, iy_d12
+        cdef vector[int] color_d12, liberty_d12
+        cdef int px, py, pp, x, y, dx, dy, fx, fy
+
+        if not state.history or not state.history[-1]:
+            return
+
+        (px, py) = state.history[-1]
+        if px < 2 or py < 2 or px >= self.b_size - 2 or py >= self.b_size - 2:
+            return
+        pp = px*self.b_size + py
+
+        d12_index = self.__D12_INDEX_CACHE[pp]
+        ix_d12 = d12_index.first
+        iy_d12 = d12_index.second
+        moves = zip(ix_d12, iy_d12)
+
+        color_d12 = state.board[ix_d12, iy_d12]
+        pattern = long(color_d12[0]) + color_shift
+        pattern = pattern * 10 + color_d12[1] + color_shift
+        pattern = pattern * 10 + color_d12[2] + color_shift
+        pattern = pattern * 10 + color_d12[3] + color_shift
+
+        pattern = pattern * 10 + color_d12[4] + color_shift
+        pattern = pattern * 10 + color_d12[5] + color_shift
+        pattern = pattern * 10 + state.board[px, py] + color_shift
+        pattern = pattern * 10 + color_d12[6] + color_shift
+        pattern = pattern * 10 + color_d12[7] + color_shift
+
+        pattern = pattern * 10 + color_d12[8] + color_shift
+        pattern = pattern * 10 + color_d12[9] + color_shift
+        pattern = pattern * 10 + color_d12[10] + color_shift
+
+        pattern = pattern * 10 + color_d12[11] + color_shift
+
+        liberty_d12 = state.liberty_counts[ix_d12, iy_d12]
+        pattern = pattern * 10 + min(max(liberty_d12[0], 0), max_liberty_count)
+        
+        pattern = pattern * 10 + min(max(liberty_d12[1], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[2], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[3], 0), max_liberty_count)
+        
+        pattern = pattern * 10 + min(max(liberty_d12[4], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[5], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(state.liberty_counts[px, py], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[6], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[7], 0), max_liberty_count)
+        
+        pattern = pattern * 10 + min(max(liberty_d12[8], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[9], 0), max_liberty_count)
+        pattern = pattern * 10 + min(max(liberty_d12[10], 0), max_liberty_count)
+        
+        pattern = pattern * 10 + min(max(liberty_d12[11], 0), max_liberty_count)
+
+        for i in xrange(12):
+            (x, y) = moves[i]
+            dx = x - px + 2
+            dy = y - py + 2
+
+            pattern_by_location = pattern + (10 * dx + dy) * 10**26
+            # if(self.pattern_d12.end() != self.pattern_d12.find(pattern_by_location)):
+            if pattern_by_location in self.pattern_d12:
+                self.hit_d12 += 1
+                pattern_id = self.pattern_d12[pattern_by_location]
+                fx = x*self.b_size+y
+                fy = self.ix_d12 + pattern_id
+                feature[fx, fy] = 1 
 
     def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=2] feature):
         """
@@ -272,6 +372,7 @@ cdef class RolloutFeature(object):
                 pattern_key = self.get_3x3_key(state, (nx, ny))
                 if pattern_key >= 0:
                     if(self.pattern_3x3.end() != self.pattern_3x3.find(pattern_key)):
+                        self.hit_3x3 += 1
                         pattern_id = self.pattern_3x3[pattern_key]
                         fx = nx*self.b_size+ny
                         fy = self.ix_3x3 + pattern_id
@@ -330,17 +431,22 @@ def timeit():
     import traceback
     import AlphaGo.go as go
 
-    b_size = 19
-    rf = RolloutFeature(b_size, f_pattern_3x3='./patterns/dict_non_response_3x3_max_4500.pat')
-    
     cdef np.ndarray[DTYPE_t, ndim=2] F
-    F = np.zeros((b_size**2, rf.n_feature), dtype=DTYPE)
+
+    b_size = 19
+    rf = RolloutFeature(b_size,
+                        f_pattern_3x3='./patterns/dict_non_response_3x3_max_4500.pat',
+                        f_pattern_d12='./patterns/dict_response_12d_max_4500.pat')
 
     elapsed_s = list()
+    hits_nakade = list()
+    hits_d12 = list()
+    hits_3x3 = list()
     num_error = 0
-    for i in xrange(200):
+    for i in xrange(1):
         gs = go.GameState()
-
+        rf.reset() 
+        F = np.zeros((b_size**2, rf.n_feature), dtype=DTYPE)
         empties = range(361)
         for j in xrange(200):
             move = random.choice(empties)
@@ -356,5 +462,12 @@ def timeit():
                 # sys.stderr.write("{}\n".format(traceback.format_exc()))
                 num_error += 1
                 continue
+        hits_nakade.append(rf.hit_nakade)
+        hits_3x3.append(rf.hit_3x3)
+        hits_d12.append(rf.hit_d12)
 
-    print("Avg. {:.3f}us Err. {:d}".format(np.mean(elapsed_s)*1000*1000, num_error))
+    print("Avg. {:.3f} us. ".format(np.mean(elapsed_s)*1000*1000) +
+          "nakade hits: {:.3f}. ".format(np.mean(hits_nakade)) +
+          "3x3 hits: {:.3f}. ".format(np.mean(hits_3x3)) +
+          "12d hits: {:.3f}. ".format(np.mean(hits_d12)) +
+          "Err: {:d}".format(num_error))
