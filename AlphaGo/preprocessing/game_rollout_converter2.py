@@ -181,7 +181,7 @@ def run_game_converter(cmd_line_args=None):
     parser.add_argument("--directory", "-d", help="Directory containing SGF files to process. if not present, expects files from stdin", default=None)  # noqa: E501
     parser.add_argument("--size", "-s", help="Size of the game board. SGFs not matching this are discarded with a warning", type=int, default=19)  # noqa: E501
     parser.add_argument("--pat-3x3", help="3x3 pattern file", default=None)
-    parser.add_argument("--pat-dia", help="Diamond pattern file", default=None)
+    parser.add_argument("--pat-12d", help="Diamond pattern file", default=None)
     parser.add_argument("--verbose", "-v", help="Turn on verbose mode", default=False, action="store_true")  # noqa: E501
 
     if cmd_line_args is None:

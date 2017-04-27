@@ -273,7 +273,7 @@ def search_nakade(state):
     cdef int[4] neighbor4
 
     if not (state.history and state.history[-1]):
-        return
+        return (-1, -1)
 
     last_move = state.history[-1]
     last_pos = last_move[0]*BOARD_SIZE+last_move[1]

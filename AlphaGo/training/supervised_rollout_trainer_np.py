@@ -1,39 +1,14 @@
 import h5py as h5
 import numpy as np
+import sys
 import time
 
 from tqdm import tqdm
 
-
-n_feature = 170
-data_file = './rollout.hdf5'
-
-# response
-# n_feature = 1
-# data_file = './response_d.hdf5'
-
-# save-atari
-# n_feature = 1
-# data_file = './save_atari_d.hdf5'
-
-# neighbour
-# n_feature = 8
-# data_file = './neighbour_d.hdf5'
-
-# one-hot color pattern
-# n_feature = 48
-# data_file = './response_pattern2_d.hdf5'
-# n_feature = 32
-# data_file = './non_response_pattern2_d.hdf5'
-
-# one-hot color and liberty pattern
-# n_feature = 96
-# data_file = './response_pattern3_d.hdf5'
-# n_feature = 64
-# data_file = './non_response_pattern3_d.hdf5'
+data_file = sys.argv[1]
 
 lr = 0.001
-iter_num = 1
+iter_num = 1000
 test_size = .2
 
 
@@ -55,16 +30,18 @@ def cross_entropy_error(y, t):
 
 
 def run_training():
-    # W = 0.01 * np.random.randn(n_feature)
-    rgen = np.random.RandomState(1)
-    W = rgen.normal(loc=0.0, scale=0.01, size=n_feature)
-
     dataset = h5.File(data_file)
 
     states = dataset['states']
     actions = dataset['actions']
 
-    board_size = (int)(np.sqrt(len(states[0])))
+    n_feature = states[0].shape[0]
+
+    # W = 0.01 * np.random.randn(n_feature)
+    rgen = np.random.RandomState(1)
+    W = rgen.normal(loc=0.0, scale=0.01, size=n_feature)
+
+    board_size = states[0].shape[-1]
 
     n_total = len(states)
     n_test = (int)(n_total*test_size)
@@ -83,12 +60,13 @@ def run_training():
         for j in tqdm(range(n_train)):
             # import pdb; pdb.set_trace()
             X = states[train_indices[j]]
+            X = X.transpose(1, 2, 0).reshape(board_size**2, n_feature)
 
             # one-hot
             t = np.zeros(board_size**2)
             a = actions[train_indices[j]]
             t[a[0]*board_size+a[1]] = 1
- 
+
             y = softmax(np.dot(X, W))
             loss = cross_entropy_error(y, t)
 
@@ -104,13 +82,20 @@ def run_training():
         train_loss_list.append(n_train_total_loss/n_train)
 
         # test
+        dot_speeds = []
         for j in range(n_test):
             X = states[test_indices[j]]
+            X = X.transpose(1, 2, 0).reshape(board_size**2, n_feature)
 
             # one-hot
             t = np.zeros(board_size**2)
             a = actions[test_indices[j]]
             t[a[0]*board_size+a[1]] = 1
+
+            # test dot speed
+            start = time.time()
+            np.dot(X, W)
+            dot_speeds.append(time.time() - start)
 
             y = softmax(np.dot(X, W))
 
@@ -118,14 +103,10 @@ def run_training():
 
         test_acc_list.append(n_test_acc*100/n_test)
 
-        print('Acc. {:.3f} ({:.0f}/{:.0f}) Loss. {:.3f} Val Acc. {:.3f} ({:.0f}/{:.0f})' \
-              .format(train_acc_list[-1],
-                      n_train_acc,
-                      n_train,
-                      train_loss_list[-1],
-                      test_acc_list[-1],
-                      n_test_acc,
-                      n_test))
+        print('Acc. {:.3f} ({:.0f}/{:.0f}) '.format(train_acc_list[-1], n_train_acc, n_train) +
+              'Loss. {:.3f} '.format(train_loss_list[-1]) +
+              'Val Acc. {:.3f} ({:.0f}/{:.0f}) '.format(test_acc_list[-1], n_test_acc, n_test) +
+              'Speed. {:.3f} us'.format(np.mean(dot_speeds)*1000*1000))
 
 
 if __name__ == '__main__':

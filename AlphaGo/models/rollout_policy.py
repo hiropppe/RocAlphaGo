@@ -6,32 +6,25 @@ import tf_nn_util
 class RolloutPolicy:
 
     def __init__(self,
-                 n_feature,
+                 n_features,
                  bsize=19,
                  logdir='./logs'):
         self.bsize = bsize
         self.logdir = logdir
-        self.n_feature = n_feature
+        self.n_features = n_features
 
-        self.graph = tf.Graph()
-        with self.graph.as_default():
-            self.statesholder = tf.placeholder(tf.float32,
-                                               shape=(None,
-                                                      self.bsize**2,
-                                                      self.input_depth))
-            self.actionsholder = tf.placeholder(tf.float32,
-                                                shape=(None, self.bsize**2))
-
-            self.W = tf_nn_util.variable_with_weight_decay(
-                        'W',
-                        [self.input_depth])
-            self.b = tf_nn_util.zero_variable(
-                        'b',
-                        [self.bsize**2])
-
-    def inference(self, stateholder):
+    def inference(self, states_pl, n_features):
         with tf.variable_scope('logits') as scope:
-            logits = tf.nn.biad_add(tf.nn.matmul(stateholder, self.W), self.b, name=scope.name)
+            kernel = tf_nn_util.variable_with_weight_decay(
+                        'weights',
+                        shape=[1, 1, n_features, 1])
+            bias = tf_nn_util.zero_variable(
+                        'bias',
+                        [self.bsize**2])
+            conv = tf.nn.conv2d(states_pl, kernel, strides=[1, 1, 1, 1], padding='SAME')
+            flatten = tf.reshape(conv, [-1, self.bsize**2])
+            pre_activation = tf.nn.bias_add(flatten, bias)
+            logits = tf.nn.relu(pre_activation, name=scope.name)
         return logits
 
     def softmax(self, logits):
@@ -39,15 +32,15 @@ class RolloutPolicy:
             probs = tf.nn.softmax(logits, name=scope.name)
         return probs
 
-    def loss(self, logits, actionsholder):
+    def loss(self, logits, actions_pl):
         with tf.variable_scope('loss') as scope:
             loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-                                  logits, actionsholder), name=scope.name)
+                                  logits, actions_pl), name=scope.name)
         return loss
 
-    def accuracy(self, probs, actionsholder):
+    def accuracy(self, probs, actions_pl):
         with tf.variable_scope('accuracy') as scope:
-            correct = tf.nn.in_top_k(probs, tf.argmax(actionsholder, 1), 1)
+            correct = tf.nn.in_top_k(probs, tf.argmax(actions_pl, 1), 1)
             acc = tf.reduce_mean(tf.cast(correct, tf.float32), name=scope.name)
         return acc
 
