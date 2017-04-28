@@ -17,6 +17,10 @@ DTYPE = np.int
 
 ctypedef np.int_t DTYPE_t
 
+cdef int WHITE = -1
+cdef int EMPTY = 0
+cdef int BLACK = 1
+cdef int OUT_OF_BOARD = 2
 
 cdef enum:
     color_shift = 2
@@ -69,9 +73,9 @@ cdef class RolloutFeature(object):
         self.n_response = 1
         self.n_save_atari = 1
         self.n_neighbor = 8
-        self.n_nakade = 8192
-        self.n_3x3 = 0
-        self.n_d12 = 0
+        self.n_nakade = 24
+        self.n_3x3 = 8*(3+4) 
+        self.n_d12 = 12*(3+4)
 
         if f_pattern_3x3 or f_pattern_d12:
             import ast
@@ -84,9 +88,8 @@ cdef class RolloutFeature(object):
                     self.pattern_d12 = ast.literal_eval(f.read())
                     self.n_d12 = max(self.pattern_d12.values()) + 1
 
-        #self.n_features = (self.n_response + self.n_save_atari + self.n_neighbor +
-        #                  self.n_nakade + self.n_3x3 + self.n_d12)
-        self.n_features = (self.n_response + self.n_save_atari + self.n_neighbor)
+        self.n_features = (self.n_response + self.n_save_atari + self.n_neighbor +
+                          self.n_nakade + self.n_3x3 + self.n_d12)
 
         self.ix_response = 0
         self.ix_save_atari = self.ix_response + self.n_response
@@ -201,14 +204,104 @@ cdef class RolloutFeature(object):
         else:
             pp = -1
 
+        # Get updated positions by previous move
+        updated_positions = self.get_updated_positions(state)
+
         self.update_neighbors(pp, feature)
         self.update_save_atari(state, feature)
-        #self.update_response_d12(state, feature)
-        #self.update_non_response_3x3(state, feature)
-        #self.update_nakade(state, feature)
+        
+        # Naive pattern feature
+        self.update_naive_non_response_3x3(state, feature, updated_positions)
+        self.update_naive_response_d12(state, feature)
+
+        # Large one-hot feature. not work well and too slow
+        # self.update_response_d12(state, feature)
+        # self.update_non_response_3x3(state, feature)
+        # self.update_nakade(state, feature)
+
+    def update_naive_response_d12(self,
+                                  state,
+                                  np.ndarray[DTYPE_t, ndim=3] feature):
+        """ Move matches 12-point diamond pattern near previous move
+            length:
+                color = 3(bit) * 12(position)
+                liberty = 4(bit) * 12(position)
+                #next move = 1(x-distance) + 1(y-distance)
+            encoding:
+                color: off=000 white=100 empty=010 black=001
+                liberty: 0=1000 1=0100 2=0010 >2=0001
+                #next move: 1=0 2=1
+        """
+        if not state.history or not state.history[-1]:
+            return
+
+        (px, py) = state.history[-1]
+        if px < 2 or py < 2 or px >= self.bsize - 2 or py >= self.bsize - 2:
+            return
+
+        pp = px*self.bsize + py
+
+        fx_vec = self.__D12_INDEX_CACHE[pp].first
+        fy_vec = self.__D12_INDEX_CACHE[pp].second
+
+        # convert to feature index
+        # color: shift +1 (w=-1, e=0, b=1) -> (w=0, e=1, b=2)
+        # liberty: clip liberty count 0,3 
+        i_color = state.board[fx_vec, fy_vec] + 1 + self.ix_d12
+
+        i_liberty_start = self.ix_d12 + 12 * 3
+        i_liberty = state.liberty_counts[fx_vec, fy_vec]
+        i_liberty = i_liberty.clip(0, 3)
+        i_liberty = i_liberty + i_liberty_start 
+
+        # each position has feature
+        feature[i_color, fx_vec, fy_vec] = 1
+        feature[i_liberty, fx_vec, fy_vec] = 1
+
+
+    def update_naive_non_response_3x3(self, state,
+                                      np.ndarray[DTYPE_t, ndim=3] feature,
+                                      vector[int] updated_positions):
+        """ Move matches 3 × 3 pattern around move
+            length:
+                color = 3(bit) * 8(position)
+                liberty = 4(bit) * 8(position)
+            encoding:
+                color: off=000 white=100 empty=010 black=001
+                liberty: 0=1000 1=0100 2=0010 >2=0001
+        """
+        # Update pattern around updated vertexes
+        for up in updated_positions:
+            feature_index = self.__NEIGHBOR8_INDEX_CACHE[up]
+            fx_vec = feature_index.first
+            fy_vec = feature_index.second
+
+            for (fx, fy) in zip(fx_vec, fy_vec):
+                # workaround. ignore position which is to close to the edge
+                if fx < 1 or fy < 1 or fx >= self.bsize - 1 or fy >= self.bsize - 1:
+                    continue
+
+                fp = fx * self.bsize + fy
+                nx_vec = self.__NEIGHBOR8_INDEX_CACHE[fp].first
+                ny_vec = self.__NEIGHBOR8_INDEX_CACHE[fp].second
+
+                # convert to feature index
+                # color: shift +1 (w=-1, e=0, b=1) -> (w=0, e=1, b=2)
+                # liberty: clip liberty count 0,3 
+                i_color = state.board[nx_vec, ny_vec] + 1 + self.ix_3x3
+
+                i_liberty_start = self.ix_3x3 + 8 * 3
+                i_liberty = state.liberty_counts[nx_vec, ny_vec]
+                i_liberty = i_liberty.clip(0, 3)
+                i_liberty = i_liberty + i_liberty_start 
+
+                for i_3x3 in range(8):
+                    feature[i_3x3*3 + i_color[i_3x3], fx, fy] = 1
+                    feature[i_3x3*3 + i_liberty[i_3x3], fx, fy] = 1
+
 
     def update_neighbors(self, prev_position, np.ndarray[DTYPE_t, ndim=3] feature):
-        """
+        """ Move is 8-connected to previous move
         """
         # clear previous neighbors
         if not self._prev_neighbors[0].empty():
@@ -229,7 +322,7 @@ cdef class RolloutFeature(object):
             self._prev_neighbors[2] = nz
 
     def update_save_atari(self, state, np.ndarray[DTYPE_t, ndim=3] feature):
-        """
+        """ Move saves stone(s) from capture
         """
         feature[self.ix_save_atari, :] = 0
         for (x, y) in state.last_liberty_cache[state.current_player]:
@@ -242,7 +335,8 @@ cdef class RolloutFeature(object):
                         feature[self.ix_save_atari, x, y] = 1
 
     def update_nakade(self, state, np.ndarray[DTYPE_t, ndim=3] feature):
-        """
+        """ Hash based large one-hot feature of nakade
+            Not work well...
         """
         feature[self.ix_nakade:self.ix_3x3, :] = 0
         (pos, shape_id) = nakade.search_nakade(state)
@@ -252,7 +346,8 @@ cdef class RolloutFeature(object):
             feature[self.ix_nakade + shape_id, x, y] = 1
 
     def update_response_d12(self, state, np.ndarray[DTYPE_t, ndim=3] feature):
-        """
+        """ Hash based large one-hot feature of 12-point diamond pattern
+            Not work well...
         """
         #cdef unsigned long long pattern = 0
         #cdef unsigned long long pattern_by_location
@@ -324,7 +419,8 @@ cdef class RolloutFeature(object):
                 feature[fz, fx, fy] = 1 
 
     def update_non_response_3x3(self, state, np.ndarray[DTYPE_t, ndim=3] feature):
-        """
+        """ Hash based large one-hot feature of 3x3 pattern
+            Not work well...
         """
         cdef vector[int] updated_positions
 
@@ -359,10 +455,13 @@ cdef class RolloutFeature(object):
         difference_size = len(board_diff)
         for i in xrange(difference_size):
             (dx, dy) = board_diff[i]
-            group = state.group_sets[dx][dy]
-            if group:
-                for (gx, gy) in group:
-                    updated_positions.push_back(gx*self.bsize+gy)
+
+            updated_positions.push_back(dx*self.bsize+dy)
+
+            # group = state.group_sets[dx][dy]
+            # if group:
+            #     for (gx, gy) in group:
+            #         updated_positions.push_back(gx*self.bsize+gy)
 
         return updated_positions
 
@@ -445,16 +544,17 @@ def timeit():
     cdef np.ndarray[DTYPE_t, ndim=3] F
 
     bsize = 19
-    rf = RolloutFeature(bsize,
-                        f_pattern_3x3='./patterns/dict_non_response_3x3_max_4500.pat',
-                        f_pattern_d12='./patterns/dict_response_12d_max_2300.pat')
+    rf = RolloutFeature(bsize)
+    #rf = RolloutFeature(bsize,
+    #                    f_pattern_3x3='./patterns/dict_non_response_3x3_max_4500.pat',
+    #                    f_pattern_d12='./patterns/dict_response_12d_max_2300.pat')
 
     elapsed_s = list()
     hits_nakade = list()
     hits_d12 = list()
     hits_3x3 = list()
     num_error = 0
-    for i in xrange(1):
+    for i in xrange(100):
         gs = go.GameState()
         rf.reset() 
         F = np.zeros((rf.n_features, bsize, bsize), dtype=DTYPE)

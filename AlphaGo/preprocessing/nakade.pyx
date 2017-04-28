@@ -55,6 +55,7 @@ cdef int NAKADE_MAX_SIZE = NAKADE_5
 cdef unsigned long long[4][9] nakade_hash
 
 cdef int[4][9] nakade_pos
+cdef int[4][9] nakade_id
 
 cdef int start = BOARD_MAX / 2 
 
@@ -191,6 +192,12 @@ def initialize_hash():
     nakade_pos[3][1] = board_size + 1;
     nakade_pos[3][2] = board_size;
     nakade_pos[3][3] = board_size;
+
+    k = 0
+    for i in range(3):
+        for j in range(NAKADE_PATTERNS[i]):
+            nakade_pos[i][j] = k
+            k += 1
 
     # reviser for fitting 13 point start
     nakade_reviser[0][0] = -1;
@@ -415,5 +422,6 @@ def find_nakade_pos(state, pos, color):
             # print nakade_num, i, nakade_hash[nakade_num - 3][i], hash
             if nakade_hash[nakade_num - 3][i] == hash:
                 return (nakade[0] + nakade_pos[nakade_num - 3][i], string_hashmap[hash])
+                # return (nakade[0] + nakade_pos[nakade_num - 3][i], nakade_id[nakade_num - 3][i])
 
     return (-1, -1)
