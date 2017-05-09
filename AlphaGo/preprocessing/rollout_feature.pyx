@@ -7,6 +7,8 @@ import numpy as np
 
 cimport numpy as np
 
+from libc.math cimport exp as cexp
+
 from libcpp.pair cimport pair
 from libcpp.vector cimport vector
 from libcpp.unordered_map cimport unordered_map
@@ -15,7 +17,8 @@ from AlphaGo.preprocessing import nakade
 
 DTYPE = np.int
 
-ctypedef np.int_t DTYPE_t
+ctypedef np.float_t DTYPE_t
+ctypedef np.float_t DTYPE_f
 
 cdef int WHITE = -1
 cdef int EMPTY = 0
@@ -28,20 +31,20 @@ cdef enum:
 
 
 cdef class RolloutFeature(object):
-    cdef public int bsize
-    cdef public int n_position
-    cdef public int n_features
+    cdef readonly int bsize
+    cdef readonly int n_position
+    cdef readonly int n_features
 
-    cdef public unordered_map[long long, int] pattern_3x3
+    cdef readonly unordered_map[long long, int] pattern_3x3
     cdef pattern_d12
-    # cdef public unordered_map[long long, int] pattern_d12
+    # cdef readonly unordered_map[long long, int] pattern_d12
 
-    cdef public int ix_response
-    cdef public int ix_save_atari
-    cdef public int ix_neighbor
-    cdef public int ix_nakade
-    cdef public int ix_3x3
-    cdef public int ix_d12
+    cdef readonly int ix_response
+    cdef readonly int ix_save_atari
+    cdef readonly int ix_neighbor
+    cdef readonly int ix_nakade
+    cdef readonly int ix_3x3
+    cdef readonly int ix_d12
 
     cdef int n_response
     cdef int n_save_atari
@@ -50,9 +53,9 @@ cdef class RolloutFeature(object):
     cdef int n_3x3
     cdef int n_d12
 
-    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR4_INDEX_CACHE
-    cdef unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_INDEX_CACHE
-    cdef unordered_map[int, pair[vector[int], vector[int]]] __D12_INDEX_CACHE
+    cdef readonly unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR4_INDEX_CACHE
+    cdef readonly unordered_map[int, pair[vector[int], vector[int]]] __NEIGHBOR8_INDEX_CACHE
+    cdef readonly unordered_map[int, pair[vector[int], vector[int]]] __D12_INDEX_CACHE
 
     # neighbor feature index cache for each position. size = 3 [x_list, y_list, z_list]
     cdef unordered_map[int, vector[vector[int]]] __NEIGHBOR8_FEATURE_CACHE
@@ -62,9 +65,9 @@ cdef class RolloutFeature(object):
 
     cdef np.ndarray prev_board
 
-    cdef public int hit_nakade
-    cdef public int hit_3x3
-    cdef public int hit_d12
+    cdef readonly int hit_nakade
+    cdef readonly int hit_3x3
+    cdef readonly int hit_d12
 
     def __init__(self, bsize=19, f_pattern_3x3=None, f_pattern_d12=None):
         self.bsize = bsize
@@ -532,7 +535,72 @@ cdef class RolloutFeature(object):
         return pattern
 
 
-def timeit():
+cdef int update_logits(int bsize, int n_features,
+         np.ndarray[DTYPE_f, ndim=1] L,
+         np.ndarray[DTYPE_f, ndim=2] X,
+         np.ndarray[DTYPE_f, ndim=1] W,
+         pair[vector[int], vector[int]] d12_cache,
+         list elapsed_logits) except? -1:
+
+    import time
+
+    cdef int n = 12, p, i, x, y
+    cdef double w_sum = 0
+    cdef vector[int] ix_d12, iy_d12
+    cdef np.ndarray[DTYPE_f, ndim=1] tmp
+
+    ix_d12 = d12_cache.first
+    iy_d12 = d12_cache.second
+
+    s = time.time()
+
+    for i in range(n):
+        x = ix_d12[i]
+        y = iy_d12[i]
+        p = x*bsize+y
+        """
+        L[p] = W[X[p] == 1].sum()
+        """
+
+        """
+        tmp = W[X[p] == 1]
+        w_sum = 0
+        for w in tmp:
+            w_sum += w
+        L[p] = w_sum
+        """
+
+        tmp = X[p]
+        w_sum = 0
+        for j in range(n_features):
+            if tmp[j]:
+                w_sum += W[j]
+        L[p] = w_sum
+
+    elapsed_logits.append(time.time() - s)
+
+cdef softmax(np.ndarray[DTYPE_f, ndim=1] x,
+             list elapsed_softmax):
+    import time
+
+    cdef double x_sum = 0, x_max = 0
+    cdef int n = 361
+
+    s = time.time()
+
+    for i in range(361):
+        if x_max < x[i]:
+            x_max = x[i]
+        x_sum += cexp(x[i])
+
+    x = x - x_max
+    y = np.exp(x) / x_sum
+    # y = np.exp(x) / np.sum(np.exp(x))
+
+    elapsed_softmax.append(time.time()-s)
+    return y
+
+cpdef timeit():
     """ Testing performance
     """
     import random
@@ -541,7 +609,8 @@ def timeit():
     import traceback
     import AlphaGo.go as go
 
-    cdef np.ndarray[DTYPE_t, ndim=3] F
+    cdef np.ndarray[DTYPE_f, ndim=3] F
+    cdef np.ndarray[DTYPE_f, ndim=1] L, W
 
     bsize = 19
     rf = RolloutFeature(bsize)
@@ -549,7 +618,16 @@ def timeit():
     #                    f_pattern_3x3='./patterns/dict_non_response_3x3_max_4500.pat',
     #                    f_pattern_d12='./patterns/dict_response_12d_max_2300.pat')
 
-    elapsed_s = list()
+    print("Board Size: {:d} ".format(bsize) +
+          "Number of features: {:d} ".format(rf.n_features))
+
+    rgen = np.random.RandomState(1)
+    W = rgen.normal(loc=0.0, scale=0.01, size=rf.n_features)
+
+    elapsed_feature = list()
+    elapsed_move = list()
+    elapsed_logits = list()
+    elapsed_softmax = list()
     hits_nakade = list()
     hits_d12 = list()
     hits_3x3 = list()
@@ -557,27 +635,59 @@ def timeit():
     for i in xrange(100):
         gs = go.GameState()
         rf.reset() 
-        F = np.zeros((rf.n_features, bsize, bsize), dtype=DTYPE)
+        F = np.zeros((rf.n_features, bsize, bsize), dtype=np.float)
+        L = np.zeros((bsize**2), dtype=np.float)
         empties = range(361)
         for j in xrange(200):
             move = random.choice(empties)
             empties.remove(move)
-            x = int(move / 19)
-            y = int(move % 19)
+            (x, y) = divmod(move, bsize)
             try:
                 s = time.time()
                 gs.do_move((x, y))
+                elapsed_move.append(time.time() - s)
+                s = time.time()
                 rf.update(gs, F)
-                elapsed_s.append(time.time() - s)
+                elapsed_feature.append(time.time() - s)
             except go.IllegalMove:
                 # sys.stderr.write("{}\n".format(traceback.format_exc()))
                 num_error += 1
                 continue
+
+            X = F.transpose(1, 2, 0).reshape(bsize**2, rf.n_features)
+            if j == 0:
+                L = X.dot(W)
+            else:
+                if not (x < 2 or y < 2 or x >= bsize - 2 or y >= bsize - 2):
+                    d12_cache = rf.__D12_INDEX_CACHE[move]
+                    update_logits(bsize, rf.n_features, L, X, W, d12_cache, elapsed_logits)
+                    softmax(L, elapsed_softmax)
+
+            """
+            dot = X.dot(W)
+            tmp_dot = np.trunc(dot * 10 ** 3)/10 ** 3
+            tmp_L = np.trunc(L * 10 ** 3)/10 ** 3
+            if not np.all(tmp_dot == tmp_L):
+                print 'Loop position: ({:d}, {:d})'.format(i, j)
+                print 'Move ({:d}, {:d})'.format(x, y)
+                print 'dot == L', dot == L
+                print 'np.where(dot != L)', np.where(dot != L)
+                print 'dot[np.where(dot != L)]', dot[np.where(dot != L)]
+                print 'L[np.where(dot != L)]', L[np.where(dot != L)]
+                print 'dot', dot
+                print 'L', L
+
+            assert np.all(X.dot(W) == L), 'assertion error at pos={:d}'.format(move)
+            """
+
         hits_nakade.append(rf.hit_nakade)
         hits_3x3.append(rf.hit_3x3)
         hits_d12.append(rf.hit_d12)
 
-    print("Avg. {:.3f} us. ".format(np.mean(elapsed_s)*1000*1000) +
+    print("Avg Update Feature. {:.3f} us. ".format(np.mean(elapsed_feature)*1000*1000) +
+          "Avg Move. {:.3f} us. ".format(np.mean(elapsed_move)*1000*1000) +
+          "Avg Logits. {:.3f} us. ".format(np.mean(elapsed_logits)*1000*1000) +
+          "Avg Softmax. {:.3f} us. ".format(np.mean(elapsed_softmax)*1000*1000) +
           "nakade hits: {:.3f}. ".format(np.mean(hits_nakade)) +
           "3x3 hits: {:.3f}. ".format(np.mean(hits_3x3)) +
           "12d hits: {:.3f}. ".format(np.mean(hits_d12)) +
