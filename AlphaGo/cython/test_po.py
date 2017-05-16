@@ -1,6 +1,6 @@
 import go
 
-go.test_playout(n_playout=1)
+go.test_playout(n_playout=100)
 
 """
 print 'initialize_const'

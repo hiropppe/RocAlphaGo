@@ -2,6 +2,8 @@
 #cython: boundscheck=False
 #cython: wraparound=False
 
+# cimport point
+
 import numpy as np
 
 cimport numpy as np
@@ -10,8 +12,13 @@ from libc.stdlib cimport malloc, free
 from libc.string cimport memset
 from libc.math cimport exp as cexp
 
+from libcpp.string cimport string as cppstring
 
 # global variables
+gogui_x[:] = ['I', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 
+              'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 
+              'U', 'V', 'W', 'X', 'Y', 'Z']
+
 pure_board_size = PURE_BOARD_SIZE
 pure_board_max = PURE_BOARD_MAX
 
@@ -65,7 +72,7 @@ cdef game_state_t *allocate_game():
 
 
 cdef void initialize_board(game_state_t *game):
-    cdef int i, x, y
+    cdef int i, x, y, pos
 
     game.moves = 1
     game.ko_pos = 0
@@ -74,9 +81,11 @@ cdef void initialize_board(game_state_t *game):
     game.current_hash = 0
 
     fill_n_char(game.board, BOARD_MAX, 0)
-    fill_n_int(game.string_id, STRING_POS_MAX, 0)
-    fill_n_int(game.string_next, STRING_POS_MAX, 0)
-    fill_n_int(game.prisoner, S_MAX, 0)
+    fill_n_int(game.candidates, BOARD_MAX, 0)
+    # fill_n_int(game.string_id, STRING_POS_MAX, 0)
+    # fill_n_int(game.string_next, STRING_POS_MAX, 0)
+    # fill_n_int(game.prisoner, S_MAX, 0)
+    
 
     for y in range(board_size):
         for x in range(OB_SIZE):
@@ -84,6 +93,11 @@ cdef void initialize_board(game_state_t *game):
             game.board[POS(y, x, board_size)] = S_OB
             game.board[POS(y, board_size - 1 - x, board_size)] = S_OB
             game.board[POS(board_size - 1 - x, y, board_size)] = S_OB
+
+    for y in range(board_start, board_end + 1):
+        for x in range(board_start, board_end + 1):
+            pos = POS(x, y, board_size)
+            game.candidates[pos] = 1 
 
     for i in range(max_string):
         game.string[i].flag = False
@@ -94,11 +108,15 @@ cdef void do_move(game_state_t *game, int pos, char color):
     cdef int connection = 0
     cdef int connect[4]
     cdef int prisoner = 0
-    cdef int neighbor4[4], neighbor_pos, neighbor_string_id
+    cdef int neighbor4[4]
+    cdef int neighbor_pos, neighbor_string_id
     cdef string_t *neighbor_string
     cdef int i
 
     connect[:] = [0, 0, 0, 0]
+
+    game.capture_num[color] = 0
+
     if game.moves < max_records:
         game.record[game.moves].color = color
         game.record[game.moves].pos = pos
@@ -108,6 +126,8 @@ cdef void do_move(game_state_t *game, int pos, char color):
         return
 
     game.board[pos] = color
+
+    game.candidates[pos] = 0
 
     get_neighbor4(neighbor4, pos)
 
@@ -124,6 +144,8 @@ cdef void do_move(game_state_t *game, int pos, char color):
             if game.string[game.string_id[neighbor_pos]].libs == 0:
                 prisoner += remove_string(game, neighbor_string)
 
+    game.prisoner[color] += prisoner
+
     if connection == 0:
         make_string(game, pos, color)
         if prisoner == 1 and game.string[game.string_id[pos]].libs == 1:
@@ -133,6 +155,8 @@ cdef void do_move(game_state_t *game, int pos, char color):
     else:
         connect_string(game, pos, color, connection, connect)
 
+    game.moves += 1
+
 
 cdef void connect_string(game_state_t *game, int pos, char color, int connection, int string_id[4]):
     cdef min_string_id = string_id[0]
@@ -141,7 +165,7 @@ cdef void connect_string(game_state_t *game, int pos, char color, int connection
     cdef bint flag = True
     cdef int i, j
 
-    print 'ConnectString', pos, color, connection
+    # print 'ConnectString', pos, color, connection
 
     for i in range(1, connection):
         flag = True
@@ -151,7 +175,7 @@ cdef void connect_string(game_state_t *game, int pos, char color, int connection
                 break
         if flag:
             if min_string_id > string_id[i]:
-                string[connections] = &game.string[min]
+                string[connections] = &game.string[min_string_id]
                 min_string_id = string_id[i]
             else:
                 string[connections] = &game.string[string_id[i]]
@@ -162,24 +186,27 @@ cdef void connect_string(game_state_t *game, int pos, char color, int connection
     if connections > 0:
         merge_string(game, &game.string[min_string_id], string, connections)
 
+
 cdef void merge_string(game_state_t *game, string_t *dst, string_t *src[3], int n):
     cdef int tmp, pos, prev, neighbor
     cdef int string_id = game.string_id[dst.origin]
     cdef int removed_string_id
     cdef int i
 
+    # print 'MergeString', n
+
     for i in range(n):
         removed_string_id = game.string_id[src[i].origin]
 
         prev = 0
         pos = src[i].lib[0]
-        while pos != LIBERTY_END:
+        while pos != liberty_end:
             prev = add_liberty(dst, pos, prev)
             pos = src[i].lib[pos]
 
         prev = 0
         pos = src[i].origin
-        while pos != STRING_END:
+        while pos != string_end:
             game.string_id[pos] = string_id
             tmp = game.string_next[pos]
             add_stone_to_string(game, dst, pos, prev)
@@ -188,7 +215,7 @@ cdef void merge_string(game_state_t *game, string_t *dst, string_t *src[3], int 
 
         prev = 0
         neighbor = src[i].neighbor[0]
-        while neighbor != NEIGHBOR_END:
+        while neighbor != neighbor_end:
             remove_neighbor_string(&game.string[neighbor], removed_string_id)
             add_neighbor(dst, neighbor, prev)
             add_neighbor(&game.string[neighbor], string_id, prev)
@@ -197,14 +224,16 @@ cdef void merge_string(game_state_t *game, string_t *dst, string_t *src[3], int 
 
         src[i].flag = False
 
+
 cdef void add_stone(game_state_t *game, int pos, char color, int string_id):
     cdef string_t *add_string
-    cdef int lib_add
+    cdef int lib_add = 0
     cdef int other = FLIP_COLOR(color)
-    cdef int neighbor4[4], neighbor_pos, neighbor_string_id
+    cdef int neighbor4[4]
+    cdef int neighbor_pos, neighbor_string_id
     cdef int i
 
-    print 'AddStone', pos, color, string_id
+    # print 'AddStone', pos, color, string_id
 
     game.string_id[pos] = string_id
 
@@ -227,9 +256,9 @@ cdef void add_stone(game_state_t *game, int pos, char color, int string_id):
 cdef void add_stone_to_string(game_state_t *game, string_t *string, int pos, int head):
     cdef int string_pos
 
-    print 'AddStoneToString', string_pos
+    # print 'AddStoneToString', pos, string.origin, head
 
-    if pos == STRING_END:
+    if pos == string_end:
         return
 
     if string.origin > pos:
@@ -247,6 +276,11 @@ cdef void add_stone_to_string(game_state_t *game, string_t *string, int pos, int
         game.string_next[pos] = game.string_next[string_pos]
         game.string_next[string_pos] = pos
 
+    # print 'Assert String', string.origin, game.string_next[pos], game.string_next[string_pos]
+    # string_pos = string.origin
+    # while game.string_next[string_pos] != string_end:
+    #    string_pos = game.string_next[string_pos]
+
     string.size += 1
 
 
@@ -255,14 +289,15 @@ cdef void make_string(game_state_t *game, int pos, char color):
     cdef int string_id = 1
     cdef int lib_add = 0
     cdef int other = FLIP_COLOR(color)
-    cdef int neighbor4[4], neighbor_pos
+    cdef int neighbor4[4]
+    cdef int neighbor_pos
     cdef int neighbor_string_id
     cdef int i
 
-    print 'MakeString', pos, color
-
     while game.string[string_id].flag:
         string_id += 1
+
+    # print 'MakeString', string_id, pos, color
 
     new_string = &game.string[string_id]
 
@@ -301,7 +336,7 @@ cdef int remove_string(game_state_t *game, string_t *string):
     cdef int remove_string_id = game.string_id[pos]
     cdef int remove_color = game.board[pos]
 
-    print 'RemoveString', remove_string_id
+    # print 'RemoveString', remove_string_id
 
     while True:
         game.board[pos] = S_EMPTY
@@ -311,14 +346,14 @@ cdef int remove_string(game_state_t *game, string_t *string):
         east_string_id = game.string_id[EAST(pos)]
         south_string_id = game.string_id[SOUTH(pos, board_size)]
 
-        if string[north_string_id].flag:
-            add_liberty(&string[north_string_id], pos, 0)
-        if string[west_string_id].flag:
-            add_liberty(&string[west_string_id], pos, 0)
-        if string[east_string_id].flag:
-            add_liberty(&string[east_string_id], pos, 0)
-        if string[south_string_id].flag:
-            add_liberty(&string[south_string_id], pos, 0)
+        if game.string[north_string_id].flag:
+            add_liberty(&game.string[north_string_id], pos, 0)
+        if game.string[west_string_id].flag:
+            add_liberty(&game.string[west_string_id], pos, 0)
+        if game.string[east_string_id].flag:
+            add_liberty(&game.string[east_string_id], pos, 0)
+        if game.string[south_string_id].flag:
+            add_liberty(&game.string[south_string_id], pos, 0)
 
         next = game.string_next[pos]
 
@@ -327,12 +362,12 @@ cdef int remove_string(game_state_t *game, string_t *string):
 
         pos = next
 
-        if pos == STRING_END:
+        if pos == string_end:
             break
 
     neighbor = string.neighbor[0]
-    while neighbor != NEIGHBOR_END:
-        remove_neighbor_string(&string[neighbor], remove_string_id)
+    while neighbor != neighbor_end:
+        remove_neighbor_string(&game.string[neighbor], remove_string_id)
         neighbor = string.neighbor[neighbor]
 
     string.flag = False
@@ -343,7 +378,7 @@ cdef int remove_string(game_state_t *game, string_t *string):
 cdef int add_liberty(string_t *string, int pos, int head):
     cdef int lib
 
-    print 'AddLiberty', pos, head
+    # print 'AddLiberty', pos, head
 
     if string.lib[pos] != 0:
         return pos
@@ -364,8 +399,8 @@ cdef int add_liberty(string_t *string, int pos, int head):
 cdef void remove_liberty(string_t *string, int pos):
     cdef int lib = 0
 
-    print 'RemoveLiberty', pos
-    print 'RemoveLiberty', string.lib[pos]
+    # print 'RemoveLiberty', pos, string.lib[pos]
+
     if string.lib[pos] == 0:
         return
 
@@ -378,34 +413,38 @@ cdef void remove_liberty(string_t *string, int pos):
     string.libs -= 1
 
 
-cdef void add_neighbor(string_t *string, int id, int head):
+cdef void add_neighbor(string_t *string, int string_id, int head):
     cdef int neighbor = 0
 
-    if string.neighbor[id] != 0:
+    # print 'AddNeighbor', string.neighbor[neighbor], string_id, head
+
+    if string.neighbor[string_id] != 0:
         return
 
     neighbor = head
 
-    while string.neighbor[neighbor] < id:
+    while string.neighbor[neighbor] < string_id:
         neighbor = string.neighbor[neighbor]
 
-    string.neighbor[id] = string.neighbor[neighbor]
-    string.neighbor[neighbor] = <short>id
+    string.neighbor[string_id] = string.neighbor[neighbor]
+    string.neighbor[neighbor] = <short>string_id
 
     string.neighbors += 1
 
 
-cdef void remove_neighbor_string(string_t *string, int id):
+cdef void remove_neighbor_string(string_t *string, int string_id):
     cdef int neighbor = 0
 
-    if string.neighbor[id] == 0:
+    # print 'RemoveNeighborString', string.neighbor[string_id], string_id
+
+    if string.neighbor[string_id] == 0:
         return
 
-    while string.neighbor[neighbor] != id:
+    while string.neighbor[neighbor] != string_id:
         neighbor = string.neighbor[neighbor]
 
     string.neighbor[neighbor] = string.neighbor[string.neighbor[neighbor]]
-    string.neighbor[id] = 0
+    string.neighbor[string_id] = 0
 
     string.neighbors -= 1
 
@@ -414,7 +453,7 @@ cdef void get_neighbor4(int neighbor4[4], int pos):
     neighbor4[0] = NORTH(pos, board_size)
     neighbor4[1] = WEST(pos)
     neighbor4[2] = EAST(pos)
-    neighbor4[3] = NORTH(pos, board_size)
+    neighbor4[3] = SOUTH(pos, board_size)
 
 
 cdef void init_board_position():
@@ -554,7 +593,7 @@ cdef void set_board_size(int size):
     board_size = size + 2 * OB_SIZE
     board_max = board_size ** 2
 
-    max_string = size * 4 / 5
+    max_string = pure_board_max * 4 / 5
     max_neighbor = max_string
 
     board_start = OB_SIZE
@@ -567,10 +606,11 @@ cdef void set_board_size(int size):
     neighbor_end = max_neighbor - 1
     liberty_end = string_lib_max - 1
 
-    max_records = size * 3
+    max_records = pure_board_max * 3
     max_moves = max_records - 1
 
     initialize_const()
+
 
 
 ## Test bench
@@ -685,30 +725,72 @@ cpdef test_playout(int n_playout=1, int move_limit=500):
     cdef char color = S_BLACK
     cdef list empties = []
     cdef list po_speeds = [], move_speeds = []
+    cdef game_state_t *game
 
+    import itertools
     import random
     import time
 
     set_board_size(19)
-
-    game = allocate_game()
-    initialize_board(game)
     for n in range(n_playout):
-        empties = range(361)
+        game = allocate_game()
+        initialize_board(game)
+        pos_generator = itertools.product(range(board_start, board_end + 1), repeat=2)
+        empties = [POS(p[0], p[1], board_size) for p in pos_generator]
         ps = time.time()
         for i in range(move_limit):
             if not empties:
                 break
             pos = random.choice(empties)
             empties.remove(pos)
-            pos = pos + (2 * 19 + 2)
             ms = time.time()
-            print pos, color
             do_move(game, pos, color)
             color = FLIP_COLOR(color)
             move_speeds.append(time.time() - ms)
         po_speeds.append(time.time() - ps)
 
     print("Avg PO. {:.3f} us. ".format(np.mean(po_speeds)*1000*1000) +
-          "Avg Move. {:.3f} ms. ".format(np.mean(move_speeds)*1000*1000*1000))
+          "Avg Move. {:.3f} ns. ".format(np.mean(move_speeds)*1000*1000*1000))
 
+    print_board(game)
+
+
+cdef void print_board(game_state_t *game):
+    cdef char stone[<int>S_MAX]
+    cdef int i, x, y, pos
+    cdef list buf = []
+
+    stone[:] = ['+', 'B', 'W', '#']
+
+    buf.append("Prisoner(Black) : {:d}\n".format(game.prisoner[<int>S_BLACK]))
+    buf.append("Prisoner(White) : {:d}\n".format(game.prisoner[<int>S_WHITE]))
+    buf.append("Move : {:d}\n".format(game.moves))
+
+    buf.append("    ")
+    i = 1
+    for _ in range(board_start, board_end + 1):
+        buf.append(" {:s}".format(cppstring(1, <char>gogui_x[i])))
+        i += 1
+    buf.append("\n")
+
+    buf.append("   +")
+    for i in range(pure_board_size * 2 + 1):
+        buf.append("-")
+    buf.append("+\n")
+
+    i = 1
+    for y in range(board_start, board_end + 1):
+        buf.append("{:d}:|".format(pure_board_size + 1 - i).rjust(4, ' '))
+        for x in range(board_start, board_end + 1):
+            pos = POS(x, y, board_size)
+            # print pos, game.board[pos]
+            buf.append(" {:s}".format(cppstring(1, stone[<int>game.board[pos]])))
+        buf.append(" |\n")
+        i += 1
+
+    buf.append("   +")
+    for i in range(1, pure_board_size * 2 + 1 + 1):
+        buf.append("-")
+    buf.append("+\n")
+
+    print(''.join(buf))

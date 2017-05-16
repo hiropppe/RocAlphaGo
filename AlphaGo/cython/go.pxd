@@ -74,6 +74,12 @@ cdef extern from "go_board.h":
         int *string_id
         int *string_next
 
+        int *candidates
+
+        int *capture_num
+
+
+cdef char gogui_x[26]
 
 cdef int pure_board_size
 cdef int pure_board_max

@@ -101,7 +101,7 @@ typedef struct {
   int string_id[STRING_POS_MAX];    // 各座標の連のID
   int string_next[STRING_POS_MAX];  // 連を構成する石のデータ構造
 
-  bool candidates[BOARD_MAX];  // 候補手かどうかのフラグ 
+  int candidates[BOARD_MAX];  // 候補手かどうかのフラグ 
 //  bool seki[BOARD_MAX];
   
 //  unsigned int tactical_features1[BOARD_MAX];  // 戦術的特徴 
