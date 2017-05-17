@@ -3,11 +3,11 @@
 cdef enum:
     MOVE_DISTANCE_MAX = 15
 
-cdef extern from "go_global.h":
+cdef extern from "common.h":
     int MAX(int x, int y)
     int MIN(int x, int y)
 
-cdef extern from "go_board.h":
+cdef extern from "ray.h":
     int PURE_BOARD_SIZE
     int PURE_BOARD_MAX
     int OB_SIZE
@@ -43,6 +43,15 @@ cdef extern from "go_board.h":
         S_OB
         S_MAX
 
+    ctypedef enum eye_condition:
+        E_NOT_EYE
+        E_COMPLETE_HALF_EYE
+        E_HALF_3_EYE
+        E_HALF_2_EYE
+        E_HALF_1_EYE
+        E_COMPLETE_ONE_EYE
+        E_MAX
+
     ctypedef struct move_t:
         int color
         int pos
@@ -57,6 +66,10 @@ cdef extern from "go_board.h":
         int size
         bint flag
 
+    ctypedef struct pattern_t:
+        unsigned int *list
+        unsigned long long *large_list
+
     ctypedef struct game_state_t:
         move_t *record
         int moves
@@ -70,6 +83,8 @@ cdef extern from "go_board.h":
 
         int pass_count
 
+        pattern_t *pat
+
         string_t *string
         int *string_id
         int *string_next
@@ -78,8 +93,11 @@ cdef extern from "go_board.h":
 
         int *capture_num
 
-
-cdef char gogui_x[26]
+    unsigned char *eye
+    unsigned char *false_eye
+    unsigned char *territory
+    unsigned char *nb4_empty
+    unsigned char *eye_condition
 
 cdef int pure_board_size
 cdef int pure_board_max

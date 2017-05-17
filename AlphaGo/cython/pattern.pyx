@@ -53,3 +53,7 @@ cdef unsigned int pat3_rotate90(unsigned int pat3):
     6 7 8    1 4 6
     """
     return ((pat3 & 0x0003) << 10) | ((pat3 & 0x0C0C) << 4) | ((pat3 & 0x3030) >> 4) | ((pat3 & 0x00C0) << 6) | ((pat3 & 0x0300) >> 6) | ((pat3 & 0xC000) >> 10)
+
+
+cdef unsigned int pat3(pattern_t *pat, int pos):
+    return (pat[pos].list[<int>MD_2] & 0xFFFF)

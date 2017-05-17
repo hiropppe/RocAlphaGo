@@ -1,7 +1,8 @@
-#define GOGUI_X(pos) (gogui_x[CORRECT_X(pos)])
-#define GOGUI_Y(pos) (pure_board_size + 1 - CORRECT_Y(pos))
+cdef extern from "ray.h":
+    int GOGUI_X(int pos)
+    int GOGUI_Y(int pos, int pure_board_size)
 
-cdef char gogui_x[26]
+    char *gogui_x
 
 cdef int string_to_integer(char *cpos )
 

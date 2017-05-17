@@ -12,13 +12,9 @@ from libc.math cimport exp as cexp
 
 from libcpp.string cimport string as cppstring
 
+cimport point
 cimport pattern as pat
-
-
-# global variables
-gogui_x[:] = ['I', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 
-              'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 
-              'U', 'V', 'W', 'X', 'Y', 'Z']
+cimport printer 
 
 pure_board_size = PURE_BOARD_SIZE
 pure_board_max = PURE_BOARD_MAX
@@ -579,7 +575,7 @@ cdef void initialize_neighbor():
         if ((i >> 12) & 0x3) == S_EMPTY:
             empty += 1
 
-        pat.nb4_empty[i] = empty
+        nb4_empty[i] = empty
 
 
 cdef void initialize_eye():
@@ -683,64 +679,64 @@ cdef void initialize_eye():
       0x5555, 0x5554, 0x5556, 0xFD55, 0xFF75,
     ]
 
-    fill_n_unsigned_char(pat.eye_condition, pat.E_NOT_EYE, 0);
+    fill_n_unsigned_char(eye_condition, E_NOT_EYE, 0);
 
     for i in range(12):
         pat.pat3_transpose16(complete_half_eye[i], pat3_transp16)
         for j in range(16):
-            pat.eye_condition[pat3_transp16[j]] = pat.E_COMPLETE_HALF_EYE
+            eye_condition[pat3_transp16[j]] = E_COMPLETE_HALF_EYE
 
     for i in range(2):
         pat.pat3_transpose16(half_3_eye[i], pat3_transp16);
         for j in range(16):
-            pat.eye_condition[pat3_transp16[j]] = pat.E_HALF_3_EYE;
+            eye_condition[pat3_transp16[j]] = E_HALF_3_EYE;
 
     for i in range(4):
         pat.pat3_transpose16(half_2_eye[i], pat3_transp16);
         for j in range(16):
-            pat.eye_condition[pat3_transp16[j]] = pat.E_HALF_2_EYE;
+            eye_condition[pat3_transp16[j]] = E_HALF_2_EYE;
 
     for i in range(6):
         pat.pat3_transpose16(half_1_eye[i], pat3_transp16);
         for j in range(16):
-            pat.eye_condition[pat3_transp16[j]] = pat.E_HALF_1_EYE;
+            eye_condition[pat3_transp16[j]] = E_HALF_1_EYE;
 
     for i in range(5):
         pat.pat3_transpose16(complete_1_eye[i], pat3_transp16);
         for j in range(16):
-            pat.eye_condition[pat3_transp16[j]] = pat.E_COMPLETE_ONE_EYE;
+            eye_condition[pat3_transp16[j]] = E_COMPLETE_ONE_EYE;
 
     # BBB
     # B*B
     # BBB
-    pat.eye[0x5555] = S_BLACK;
+    eye[0x5555] = S_BLACK;
 
     # WWW
     # W*W
     # WWW
-    pat.eye[pat.pat3_reverse(0x5555)] = S_WHITE;
+    eye[pat.pat3_reverse(0x5555)] = S_WHITE;
 
     # +B+
     # B*B
     # +B+
-    pat.eye[0x1144] = S_BLACK;
+    eye[0x1144] = S_BLACK;
 
     # +W+
     # W*W
     # +W+
-    pat.eye[pat.pat3_reverse(0x1144)] = S_WHITE;
+    eye[pat.pat3_reverse(0x1144)] = S_WHITE;
 
     for i in range(14):
       pat.pat3_transpose8(eye_pat3[i], transp);
       for j in range(8):
-        pat.eye[transp[j]] = S_BLACK;
-        pat.eye[pat.pat3_reverse(transp[j])] = S_WHITE;
+        eye[transp[j]] = S_BLACK;
+        eye[pat.pat3_reverse(transp[j])] = S_WHITE;
 
     for i in range(4):
       pat.pat3_transpose8(false_eye_pat3[i], transp);
       for j in range(8):
-        pat.false_eye[transp[j]] = S_BLACK;
-        pat.false_eye[pat.pat3_reverse(transp[j])] = S_WHITE;
+        false_eye[transp[j]] = S_BLACK;
+        false_eye[pat.pat3_reverse(transp[j])] = S_WHITE;
 
 
 cdef void initialize_const():
@@ -800,7 +796,7 @@ cdef bint is_legal(game_state_t *game, int pos, char color):
     if game.board[pos] != S_EMPTY:
         return False
 
-    if is_suicide(game, pos, color):
+    if nb4_empty[pat.pat3(game.pat, pos)] == 0 and is_suicide(game, pos, color):
         return False
 
     return True
@@ -965,45 +961,4 @@ cpdef test_playout(int n_playout=1, int move_limit=500):
     print("Avg PO. {:.3f} us. ".format(np.mean(po_speeds)*1000*1000) +
           "Avg Move. {:.3f} ns. ".format(np.mean(move_speeds)*1000*1000*1000))
 
-    print_board(game)
-
-
-cdef void print_board(game_state_t *game):
-    cdef char stone[<int>S_MAX]
-    cdef int i, x, y, pos
-    cdef list buf = []
-
-    stone[:] = ['+', 'B', 'W', '#']
-
-    buf.append("Prisoner(Black) : {:d}\n".format(game.prisoner[<int>S_BLACK]))
-    buf.append("Prisoner(White) : {:d}\n".format(game.prisoner[<int>S_WHITE]))
-    buf.append("Move : {:d}\n".format(game.moves))
-
-    buf.append("    ")
-    i = 1
-    for _ in range(board_start, board_end + 1):
-        buf.append(" {:s}".format(cppstring(1, <char>gogui_x[i])))
-        i += 1
-    buf.append("\n")
-
-    buf.append("   +")
-    for i in range(pure_board_size * 2 + 1):
-        buf.append("-")
-    buf.append("+\n")
-
-    i = 1
-    for y in range(board_start, board_end + 1):
-        buf.append("{:d}:|".format(pure_board_size + 1 - i).rjust(4, ' '))
-        for x in range(board_start, board_end + 1):
-            pos = POS(x, y, board_size)
-            # print pos, game.board[pos]
-            buf.append(" {:s}".format(cppstring(1, stone[<int>game.board[pos]])))
-        buf.append(" |\n")
-        i += 1
-
-    buf.append("   +")
-    for i in range(1, pure_board_size * 2 + 1 + 1):
-        buf.append("-")
-    buf.append("+\n")
-
-    print(''.join(buf))
+    printer.print_board(game)
