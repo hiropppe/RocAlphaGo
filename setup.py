@@ -10,7 +10,8 @@ from Cython.Build import cythonize
 core.setup(
   ext_modules=cythonize(
       ["AlphaGo/cython/go.pyx",
-       "AlphaGo/cython/point.pyx",
+#       "AlphaGo/cython/point.pyx",
+       "AlphaGo/cython/pattern.pyx",
        "AlphaGo/cython/test_go.pyx",
        "AlphaGo/preprocessing/rollout_feature.pyx",
        "AlphaGo/preprocessing/nakade.pyx"],
