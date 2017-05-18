@@ -1,8 +1,9 @@
-cimport go
-
 from libc.stdlib cimport malloc, free
 
 from nose.tools import ok_, eq_
+
+cimport go
+cimport printer
 
 
 def test_set_board_size_9():
@@ -73,6 +74,8 @@ def test_add_liberty_to_isolated_one():
     ok_(string.lib[neighbor4[2]] == neighbor4[3])
     ok_(string.libs == 4)
 
+    go.free_game(game)
+
 
 def test_remove_liberty_of_isolated_one():
     cdef go.game_state_t *game
@@ -106,6 +109,8 @@ def test_remove_liberty_of_isolated_one():
     go.remove_liberty(string, south)
     ok_(string.lib[south] == 0)
 
+    go.free_game(game)
+
 
 def test_make_string_of_isolated_one():
     cdef go.game_state_t *game
@@ -127,6 +132,8 @@ def test_make_string_of_isolated_one():
 
     ok_(game.string_id[pos] == 1)
     ok_(game.string_next[pos] == go.string_pos_max - 1)
+
+    go.free_game(game)
 
 
 def test_add_neighbor_to_isolated_one():
@@ -160,6 +167,8 @@ def test_add_neighbor_to_isolated_one():
     ok_(game.string[2].neighbor[0] == 1)
     ok_(game.string[2].neighbor[1] == go.max_neighbor - 1)
 
+    go.free_game(game)
+
 
 def test_add_stone_to_string_less_position():
     cdef go.game_state_t *game
@@ -180,6 +189,8 @@ def test_add_stone_to_string_less_position():
     ok_(game.string_next[add_stone] == origin)
     ok_(game.string_next[origin] == go.string_pos_max - 1)
 
+    go.free_game(game)
+
 
 def test_add_stone_to_string_larger_position_from_zero_head():
     cdef go.game_state_t *game
@@ -198,6 +209,8 @@ def test_add_stone_to_string_larger_position_from_zero_head():
     ok_(string.size == 2)
     ok_(game.string_next[origin] == add_stone)
     ok_(game.string_next[add_stone] == go.string_pos_max - 1)
+
+    go.free_game(game)
 
 
 def test_add_stone_to_string_larger_position_from_nonzero_head():
@@ -227,6 +240,8 @@ def test_add_stone_to_isolated_stone():
     ok_(game.string_id[add_pos] == 1)
     ok_(game.string_next[origin] == add_pos)
     ok_(game.string_next[add_pos] == go.string_pos_max - 1)
+
+    go.free_game(game)
 
 
 def test_merge_string_two():
@@ -262,6 +277,8 @@ def test_merge_string_two():
     ok_(game.string_next[second], go.string_pos_max - 1)
 
     go.merge_string(game, &game.string[1], string, 1)
+
+    go.free_game(game)
 
 
 def test_merge_string_three():
@@ -306,6 +323,22 @@ def test_merge_string_three():
 
     go.merge_string(game, &game.string[1], string, 1)
 
+    go.free_game(game)
+
+
+def test_is_legal_stone_exists():
+    cdef go.game_state_t *game
+    cdef int pos = go.POS(4, 4, go.board_size)
+
+    game = __initialize_game()
+
+    go.put_stone(game, pos, go.S_BLACK)
+
+    ok_(go.is_legal(game, pos, go.S_BLACK) == False)
+    ok_(go.is_legal(game, pos, go.S_WHITE) == False)
+
+    go.free_game(game)
+
 
 cdef go.game_state_t* __initialize_game(int board_size=9):
     cdef go.game_state_t *game
@@ -313,7 +346,7 @@ cdef go.game_state_t* __initialize_game(int board_size=9):
     go.set_board_size(board_size)
 
     game = go.allocate_game()
-    go.initialize_board(game)
+    go.initialize_board(game, False)
 
     return game
 

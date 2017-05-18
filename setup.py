@@ -13,6 +13,8 @@ core.setup(
        "AlphaGo/cython/point.pyx",
        "AlphaGo/cython/pattern.pyx",
        "AlphaGo/cython/printer.pyx",
+       "AlphaGo/cython/policy_feature.pyx",
+       "AlphaGo/cython/arrtest.pyx",
        "AlphaGo/cython/test_go.pyx",
        "AlphaGo/preprocessing/rollout_feature.pyx",
        "AlphaGo/preprocessing/nakade.pyx"],

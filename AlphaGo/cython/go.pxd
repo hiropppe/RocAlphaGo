@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
 
-cdef enum:
-    MOVE_DISTANCE_MAX = 15
-
 cdef extern from "common.h":
     int MAX(int x, int y)
     int MIN(int x, int y)
@@ -27,6 +24,7 @@ cdef extern from "ray.h":
     int PASS
     int RESIGN
     int KOMI
+    int MAX_POLICY_FEATURE
 
     int POS(int x, int y, int board_size)
     int NORTH(int pos, int board_size)
@@ -35,6 +33,8 @@ cdef extern from "ray.h":
     int SOUTH(int pos, int board_size)
 
     char FLIP_COLOR(char color)
+
+    int MOVE_DISTANCE_MAX
 
     ctypedef enum stone:
         S_EMPTY
@@ -71,6 +71,7 @@ cdef extern from "ray.h":
         unsigned long long *large_list
 
     ctypedef struct game_state_t:
+        char current_color
         move_t *record
         int moves
         int *prisoner
@@ -80,6 +81,7 @@ cdef extern from "ray.h":
         unsigned long long current_hash
 
         char *board
+        int *birth_move
 
         int pass_count
 
@@ -92,6 +94,8 @@ cdef extern from "ray.h":
         int *candidates
 
         int *capture_num
+
+        bint rollout
 
     unsigned char *eye
     unsigned char *false_eye
@@ -140,6 +144,8 @@ cdef int *onboard_pos
 cdef int *corner
 cdef int[:, ::1] corner_neighbor
 
+cdef int policy_feature_num
+cdef int[:, ::1] policy_feature_planes
 
 cdef void fill_n_char (char *arr, int size, char v)
 cdef void fill_n_short (short *arr, int size, short v)
@@ -149,10 +155,13 @@ cdef void initialize_const()
 cdef void set_board_size(int size)
 
 cdef game_state_t *allocate_game()
-cdef void initialize_board(game_state_t *game)
+cdef void free_game(game_state_t *game)
+cdef void initialize_board(game_state_t *game, bint rollout)
 
 
-cdef void do_move(game_state_t *game, int pos, char color)
+cdef void do_move(game_state_t *game, int pos)
+
+cdef void put_stone(game_state_t *game, int pos, char color)
 cdef void connect_string(game_state_t *game, int pos, char color, int connection, int string_id[4])
 cdef void merge_string(game_state_t *game, string_t *dst, string_t *src[3], int n)
 cdef void add_stone(game_state_t *game, int pos, char color, int string_id)
@@ -174,4 +183,5 @@ cdef void init_corner()
 cdef void initialize_neighbor()
 cdef void initialize_eye()
 cdef bint is_legal(game_state_t *game, int pos, char color)
+cdef bint is_legal_not_eye(game_state_t *game, int pos, char color)
 cdef bint is_suicide(game_state_t *game, int pos, char color)

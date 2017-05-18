@@ -13,6 +13,19 @@ cdef extern from "ray.h":
     unsigned int REV16(unsigned int p)
     unsigned int REV18(unsigned int p)
 
+    int N
+    int S
+    int W
+    int E
+    int NN
+    int NW
+    int NE
+    int SS
+    int SW
+    int SE
+    int WW
+    int EE
+
     int MD2_MAX
     int PAT3_MAX
     int MD2_LIMIT
@@ -33,7 +46,12 @@ cdef extern from "ray.h":
         unsigned long long *large_list
 
 
+# init
 cdef void clear_pattern(pattern_t *pat)
+
+# update
+cdef void update_md2_stone(pattern_t *pat, int pos, char color)
+cdef void update_md2_empty(pattern_t *pat, int pos)
 
 # symmetric 
 cdef void pat3_transpose8(unsigned int pat3, unsigned int *transp)

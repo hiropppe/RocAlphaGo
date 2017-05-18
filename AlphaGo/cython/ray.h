@@ -15,19 +15,20 @@
 #define REV3(p) (((p) >> 4) | ((p) & 0xC) | (((p) & 0x3) << 4))
 #define REV(p) (((p) >> 2) | (((p) & 0x3) << 2))
 
-#define N   (-board_size)
-#define S   (board_size)
+/*
+#define N(board_size)   (-board_size)
+#define S(board_size)   (board_size)
 #define E   (1)
 #define W   (-1)
-#define NN  (N+N)
-#define NE  (N+E)
-#define NW  (N+W)
-#define SS  (S+S)
-#define SE  (S+E)
-#define SW  (S+W)
+#define NN(board_size)  (N+N)
+#define NE(board_size)  (N+E)
+#define NW(board_size)  (N+W)
+#define SS(board_size)  (S+S)
+#define SE(board_size)  (S+E)
+#define SW(board_size)  (S+W)
 #define WW  (W+W)
 #define EE  (E+E)
-
+*/
 
 const int MD2_MAX = 16777216;	// 2^24
 const int PAT3_MAX = 65536;	// 2^16
@@ -51,6 +52,14 @@ typedef struct pattern {
   unsigned int list[MD_MAX];
   unsigned long long large_list[MD_LARGE_MAX];
 } pattern_t;
+
+int NN, NW, N, NE, WW, W, E, EE, SW, S, SE, SS;
+
+
+/***************
+ * UctRating.h *
+ ***************/
+const int MOVE_DISTANCE_MAX = 15;
 
 
 /*************
@@ -84,6 +93,8 @@ const int PASS = 0;     // パスに相当する値
 const int RESIGN = -1;  // 投了に相当する値
 
 const double KOMI = 6.5; // デフォルトのコミの値
+
+const int MAX_POLICY_FEATURE = 48;
 
 #define POS(x, y, board_size) ((x) + (y) * (board_size))
 #define X(pos, board_size) ((pos) % board_size)
@@ -148,34 +159,36 @@ typedef struct {
 
 
 typedef struct {
-  struct move record[MAX_RECORDS];  // 着手箇所と色の記録
-  int moves;                        // 着手数の記録
-  int prisoner[S_MAX];              // アゲハマ
-  int ko_pos;                       // 劫となっている箇所
-  int ko_move;                      // 劫となった時の着手数
+    char current_color; 
+    struct move record[MAX_RECORDS];    // 着手箇所と色の記録
+    int moves;                          // 着手数の記録
+    int prisoner[S_MAX];                // アゲハマ
+    int ko_pos;                         // 劫となっている箇所
+    int ko_move;                        // 劫となった時の着手数
 
-  unsigned long long current_hash;     // 現在の局面のハッシュ値
-  unsigned long long previous1_hash;   // 1手前の局面のハッシュ値
-  unsigned long long previous2_hash;   // 2手前の局面のハッシュ値
+    unsigned long long current_hash;     // 現在の局面のハッシュ値
+    unsigned long long previous1_hash;   // 1手前の局面のハッシュ値
+    unsigned long long previous2_hash;   // 2手前の局面のハッシュ値
 
-  char board[BOARD_MAX];            // 盤面 
+    char board[BOARD_MAX];              // 盤面 
+    int birth_move[BOARD_MAX];          // 打たれた着手数
 
-  int pass_count;                   // パスした回数
+    int pass_count;                   // パスした回数
 
-  pattern_t pat[BOARD_MAX];    // 周囲の石の配置 
+    pattern_t pat[BOARD_MAX];    // 周囲の石の配置 
 
-  string_t string[MAX_STRING];        // 連のデータ(19x19 : 573,845bytes)
-  int string_id[STRING_POS_MAX];    // 各座標の連のID
-  int string_next[STRING_POS_MAX];  // 連を構成する石のデータ構造
+    string_t string[MAX_STRING];        // 連のデータ(19x19 : 573,845bytes)
+    int string_id[STRING_POS_MAX];    // 各座標の連のID
+    int string_next[STRING_POS_MAX];  // 連を構成する石のデータ構造
 
-  int candidates[BOARD_MAX];  // 候補手かどうかのフラグ 
+    int candidates[BOARD_MAX];  // 候補手かどうかのフラグ 
 //  bool seki[BOARD_MAX];
   
 //  unsigned int tactical_features1[BOARD_MAX];  // 戦術的特徴 
 //  unsigned int tactical_features2[BOARD_MAX];  // 戦術的特徴 
 
-  int capture_num[S_OB];                   // 前の着手で打ち上げた石の数
-  int capture_pos[S_OB][PURE_BOARD_MAX];   // 前の着手で石を打ち上げた座標 
+    int capture_num[S_OB];                   // 前の着手で打ち上げた石の数
+    int capture_pos[S_OB][PURE_BOARD_MAX];   // 前の着手で石を打ち上げた座標 
 
 //  int update_num[S_OB];                    // 戦術的特徴が更新された数
 //  int update_pos[S_OB][PURE_BOARD_MAX];    // 戦術的特徴が更新された座標 
@@ -183,7 +196,12 @@ typedef struct {
 //  long long rate[2][BOARD_MAX];           // シミュレーション時の各座標のレート 
 //  long long sum_rate_row[2][BOARD_SIZE];  // シミュレーション時の各列のレートの合計値  
 //  long long sum_rate[2];                  // シミュレーション時の全体のレートの合計値
+    bool rollout;
 } game_state_t;
+
+//int onboard_pos[PURE_BOARD_MAX];
+//int board_x[BOARD_MAX];
+//int board_y[BOARD_MAX];
 
 unsigned char eye[PAT3_MAX];
 unsigned char false_eye[PAT3_MAX];

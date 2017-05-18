@@ -15,6 +15,7 @@ from libcpp.string cimport string as cppstring
 cimport point
 cimport pattern as pat
 cimport printer 
+cimport policy_feature
 
 pure_board_size = PURE_BOARD_SIZE
 pure_board_max = PURE_BOARD_MAX
@@ -39,6 +40,9 @@ max_records = MAX_RECORDS
 max_moves = MAX_MOVES
 
 default_komi = KOMI
+
+policy_feature_num = MAX_POLICY_FEATURE
+policy_feature_planes = np.ndarray((policy_feature_num, pure_board_max), dtype=np.int32)
 
 
 cdef void fill_n_char (char *arr, int size, char v):
@@ -74,20 +78,28 @@ cdef game_state_t *allocate_game():
     return game
 
 
-cdef void initialize_board(game_state_t *game):
+cdef void free_game(game_state_t *game):
+    if game:
+        free(game)
+
+
+cdef void initialize_board(game_state_t *game, bint rollout):
     cdef int i, x, y, pos
 
+    memset(game.record, 0, sizeof(move_t) * max_records)
+    memset(game.pat, 0, sizeof(pattern_t) * board_max)
+
+    game.current_color = S_BLACK
     game.moves = 1
     game.ko_pos = 0
     game.ko_move = 0
     game.pass_count = 0
     game.current_hash = 0
+    game.rollout = rollout
 
     fill_n_char(game.board, BOARD_MAX, 0)
+    fill_n_int(game.birth_move, BOARD_MAX, 0)
     fill_n_int(game.candidates, BOARD_MAX, 0)
-    # fill_n_int(game.string_id, STRING_POS_MAX, 0)
-    # fill_n_int(game.string_next, STRING_POS_MAX, 0)
-    # fill_n_int(game.prisoner, S_MAX, 0) 
 
     for y in range(board_size):
         for x in range(OB_SIZE):
@@ -104,11 +116,24 @@ cdef void initialize_board(game_state_t *game):
     for i in range(max_string):
         game.string[i].flag = False
 
+    pat.clear_pattern(game.pat)
+
+    # Policy Network feature planes
+    policy_feature_planes = np.ndarray((policy_feature_num, pure_board_max), dtype=np.int32)
+    policy_feature_planes[...] = 0
+    # Ones: A constant plane filled with 1
+    policy_feature_planes[3, :] = 1
+
     initialize_neighbor()
     initialize_eye()
 
 
-cdef void do_move(game_state_t *game, int pos, char color):
+cdef void do_move(game_state_t *game, int pos):
+    put_stone(game, pos, game.current_color)
+    game.current_color = FLIP_COLOR(game.current_color)
+
+
+cdef void put_stone(game_state_t *game, int pos, char color):
     cdef char other = FLIP_COLOR(color)
     cdef int connection = 0
     cdef int connect[4]
@@ -120,7 +145,7 @@ cdef void do_move(game_state_t *game, int pos, char color):
 
     connect[:] = [0, 0, 0, 0]
 
-    game.capture_num[color] = 0
+    game.capture_num[<int>color] = 0
 
     if game.moves < max_records:
         game.record[game.moves].color = color
@@ -133,6 +158,8 @@ cdef void do_move(game_state_t *game, int pos, char color):
     game.board[pos] = color
 
     game.candidates[pos] = 0
+
+    pat.update_md2_stone(game.pat, pos, color)
 
     get_neighbor4(neighbor4, pos)
 
@@ -149,7 +176,7 @@ cdef void do_move(game_state_t *game, int pos, char color):
             if game.string[game.string_id[neighbor_pos]].libs == 0:
                 prisoner += remove_string(game, neighbor_string)
 
-    game.prisoner[color] += prisoner
+    game.prisoner[<int>color] += prisoner
 
     if connection == 0:
         make_string(game, pos, color)
@@ -161,6 +188,9 @@ cdef void do_move(game_state_t *game, int pos, char color):
         connect_string(game, pos, color, connection, connect)
 
     game.moves += 1
+
+    if not game.rollout:
+        game.birth_move[pos] = game.moves
 
 
 cdef void connect_string(game_state_t *game, int pos, char color, int connection, int string_id[4]):
@@ -345,6 +375,11 @@ cdef int remove_string(game_state_t *game, string_t *string):
 
     while True:
         game.board[pos] = S_EMPTY
+
+        if not game.rollout:
+            game.birth_move[pos] = 0
+
+        pat.update_md2_empty(game.pat, pos)
 
         north_string_id = game.string_id[NORTH(pos, board_size)]
         west_string_id = game.string_id[WEST(pos)]
@@ -789,6 +824,19 @@ cdef void set_board_size(int size):
     max_records = pure_board_max * 3
     max_moves = max_records - 1
 
+    pat.N = -board_size
+    pat.S = board_size
+    pat.W = -1
+    pat.E = 1
+    pat.NN = pat.N + pat.N
+    pat.NW = pat.N + pat.W
+    pat.NE = pat.N + pat.E
+    pat.SS = pat.S + pat.S
+    pat.SW = pat.S + pat.W
+    pat.SE = pat.S + pat.E
+    pat.WW = pat.W + pat.W
+    pat.EE = pat.E + pat.E
+
     initialize_const()
 
 
@@ -800,6 +848,27 @@ cdef bint is_legal(game_state_t *game, int pos, char color):
         return False
 
     return True
+
+
+cdef bint is_legal_not_eye(game_state_t *game, int pos, char color):
+    if game.board[pos] != S_EMPTY:
+        game.candidates[pos] = False
+        return False
+
+    if (eye[pat.pat3(game.pat, pos)] != <int>color or
+        game.string[game.string_id[pos.NORTH(pos, board_size)]].libs == 1 or
+        game.string[game.string_id[pos.WEST(pos)]].libs == 1 or
+        game.string[game.string_id[pos.EAST(pos)]].libs == 1 or
+        game.string[game.string_id[pos.SOUTH(pos, board_size)]].libs == 1):
+
+        if nb4_empty[pat.pat3(game.pat, pos)] == 0 and is_suicide(game, pos, color):
+            return False
+
+        return True
+
+    game.candidates[pos] = False
+
+    return False
 
 
 cdef bint is_suicide(game_state_t *game, int pos, char color):
@@ -822,118 +891,13 @@ cdef bint is_suicide(game_state_t *game, int pos, char color):
     return True
 
 
-## Test bench
-cpdef void arr_bench():
-    arr_sum()
-    arrmv_sum()
-    numpy_sum()
-    numpymv_sum()
-
-
-cpdef void arr_sum():
-    cdef int i, tmp, sum = 0
-    cdef int *arr
-    import time
-    
-    arr = <int *>malloc(100000 * sizeof(int))
-    fill_n_int(arr, 100000, 0)
-
-    s = time.time()
-    for i in range(100000):
-        arr[i] = 1
-    print 'Array write: ', (time.time() - s) * 1000 ** 2, 'us.'
-
-    s = time.time()
-    for i in range(1, 100000):
-        tmp = arr[i-1]
-    print 'Array read: ', (time.time() - s) * 1000 ** 2, 'us.', tmp
-
-    s = time.time()
-    for i in range(100000):
-        sum += arr[i]
-    print 'Array sum: ', (time.time() - s) * 1000 ** 2, 'us.', sum
-
-
-cpdef void arrmv_sum():
-    cdef int i, tmp, sum = 0
-    cdef int *arr
-    cdef int[:] mv
-    import time
-    
-    arr = <int *>malloc(100000 * sizeof(int))
-    mv = <int[:100000]>arr
-    mv[...] = 0
-
-    s = time.time()
-    for i in range(100000):
-        mv[i] = 1
-    print 'Memoryview of c array write: ', (time.time() - s) * 1000 ** 2, 'us.'
-
-    s = time.time()
-    for i in range(1, 100000):
-        tmp = mv[i-1]
-    print 'Memoryview of c array read: ', (time.time() - s) * 1000 ** 2, 'us.', tmp
-
-    s = time.time()
-    for i in range(100000):
-        sum += mv[i]
-    print 'Memoryview of c array sum: ', (time.time() - s) * 1000 ** 2, 'us.', sum
-
-
-cpdef void numpy_sum():
-    cdef int i, tmp, sum = 0
-    import time
-
-    arr = np.ndarray((100000), dtype=np.int32)
-    arr.fill(0)
-
-    s = time.time()
-    for i in range(100000):
-        arr[i] = 1 
-    print 'ndarray write: ', (time.time() - s) * 1000 ** 2, 'us.'
-
-    s = time.time()
-    for i in range(1, 100000):
-        tmp = arr[i-1]
-    print 'ndarray read: ', (time.time() - s) * 1000 ** 2, 'us.', tmp
-
-    s = time.time()
-    sum = arr.sum()
-    print 'ndarray sum: ', (time.time() - s) * 1000 ** 2, 'us.', sum
-
-
-cpdef void numpymv_sum():
-    cdef int i, tmp, sum = 0
-    cdef int[:] mv
-    import time
-
-    arr = np.ndarray((100000), dtype=np.int32)
-    arr.fill(0)
-    mv = arr
-
-    s = time.time()
-    for i in range(100000):
-        mv[i] = 1
-    print 'Memoryview of ndarray write: ', (time.time() - s) * 1000 ** 2, 'us.'
-
-    s = time.time()
-    for i in range(1, 100000):
-        tmp = mv[i-1]
-    print 'Memoryview of ndarray read: ', (time.time() - s) * 1000 ** 2, 'us.', tmp
-
-    s = time.time()
-    for i in range(100000):
-        sum += mv[i]
-    print 'Memoryview of ndarray sum: ', (time.time() - s) * 1000 ** 2, 'us.', sum
-
-
 cpdef test_playout(int n_playout=1, int move_limit=500):
     """ benchmark playout speed
     """
     cdef int i, n
     cdef char color = S_BLACK
     cdef list empties = []
-    cdef list po_speeds = [], move_speeds = []
+    cdef list po_speeds = [], move_speeds = [], policy_feature_speeds = []
     cdef game_state_t *game
 
     import itertools
@@ -943,7 +907,7 @@ cpdef test_playout(int n_playout=1, int move_limit=500):
     set_board_size(19)
     for n in range(n_playout):
         game = allocate_game()
-        initialize_board(game)
+        initialize_board(game, False)
         pos_generator = itertools.product(range(board_start, board_end + 1), repeat=2)
         empties = [POS(p[0], p[1], board_size) for p in pos_generator]
         ps = time.time()
@@ -953,12 +917,19 @@ cpdef test_playout(int n_playout=1, int move_limit=500):
             pos = random.choice(empties)
             empties.remove(pos)
             ms = time.time()
-            do_move(game, pos, color)
-            color = FLIP_COLOR(color)
-            move_speeds.append(time.time() - ms)
+            if is_legal_not_eye(game, pos, game.current_color):
+                do_move(game, pos)
+                move_speeds.append(time.time() - ms)
+
+                Fps = time.time()
+                policy_feature.update(policy_feature_planes, game)
+                policy_feature_speeds.append(time.time() - Fps)
+
         po_speeds.append(time.time() - ps)
+        printer.print_board(game)
+        free_game(game)
 
-    print("Avg PO. {:.3f} us. ".format(np.mean(po_speeds)*1000*1000) +
-          "Avg Move. {:.3f} ns. ".format(np.mean(move_speeds)*1000*1000*1000))
+    print("Avg PO. {:.3f} us. ".format(np.mean(po_speeds)*1000**2) +
+          "Avg Move. {:.3f} ns. ".format(np.mean(move_speeds)*1000**3) +
+          "Avg Feature Calc (Policy). {:.3f} us. ".format(np.mean(policy_feature_speeds)*1000**2))
 
-    printer.print_board(game)

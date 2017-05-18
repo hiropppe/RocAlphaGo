@@ -39,3 +39,7 @@ class TestCBoard(unittest.TestCase):
 
     def test_merge_string_three(self):
         test_go.test_merge_string_three()
+
+    def test_is_legal_stone_exists(self):
+        test_go.test_is_legal_stone_exists()
+
