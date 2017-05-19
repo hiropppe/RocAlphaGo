@@ -188,7 +188,7 @@ typedef struct {
 //  unsigned int tactical_features2[BOARD_MAX];  // 戦術的特徴 
 
     int capture_num[S_OB];                   // 前の着手で打ち上げた石の数
-    int capture_pos[S_OB][PURE_BOARD_MAX];   // 前の着手で石を打ち上げた座標 
+//    int capture_pos[S_OB][PURE_BOARD_MAX];   // 前の着手で石を打ち上げた座標 
 
 //  int update_num[S_OB];                    // 戦術的特徴が更新された数
 //  int update_pos[S_OB][PURE_BOARD_MAX];    // 戦術的特徴が更新された座標 
@@ -208,7 +208,6 @@ unsigned char false_eye[PAT3_MAX];
 unsigned char territory[PAT3_MAX];
 unsigned char nb4_empty[PAT3_MAX];
 unsigned char eye_condition[PAT3_MAX];
-
 
 
 /***********

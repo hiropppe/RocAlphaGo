@@ -1,7 +1,7 @@
 import go
 import arrtest
 
-go.test_playout(n_playout=1)
+go.test_playout()
 
 #arrtest.arr_bench()
 

@@ -7,7 +7,7 @@ import numpy as np
 cimport numpy as np
 
 from libc.stdlib cimport malloc, free
-from libc.string cimport memset
+from libc.string cimport memset, memcpy
 from libc.math cimport exp as cexp
 
 from libcpp.string cimport string as cppstring
@@ -40,9 +40,6 @@ max_records = MAX_RECORDS
 max_moves = MAX_MOVES
 
 default_komi = KOMI
-
-policy_feature_num = MAX_POLICY_FEATURE
-policy_feature_planes = np.ndarray((policy_feature_num, pure_board_max), dtype=np.int32)
 
 
 cdef void fill_n_char (char *arr, int size, char v):
@@ -83,6 +80,28 @@ cdef void free_game(game_state_t *game):
         free(game)
 
 
+cdef void copy_game(game_state_t *dst, game_state_t *src):
+    #memcpy(dst.record, src.record, sizeof(move_t) * max_records)
+    #memcpy(dst.prisoner, src.prisoner, sizeof(int) * S_MAX)
+    memcpy(dst.board, src.board, sizeof(char) * board_max)
+    #memcpy(dst.birth_move, src.birth_move, sizeof(int) * board_max)
+    #memcpy(dst.pat, src.pat, sizeof(pattern_t) * board_max)
+    memcpy(dst.string_id, src.string_id, sizeof(int) * string_pos_max)
+    memcpy(dst.string_next, src.string_next, sizeof(int) * string_pos_max)
+    #memcpy(dst.candidates, src.candidates, sizeof(bint) * board_max)
+    #memcpy(dst.capture_num, src.capture_num, sizeof(int) * S_OB)
+
+    for i in range(max_string):
+        if src.string[i].flag:
+            memcpy(&dst.string[i], &src.string[i], sizeof(string_t))
+        else:
+            dst.string[i].flag = False
+
+    dst.current_color = src.current_color
+    #dst.pass_count = src.pass_count
+    #dst.moves = src.moves
+
+
 cdef void initialize_board(game_state_t *game, bint rollout):
     cdef int i, x, y, pos
 
@@ -118,14 +137,9 @@ cdef void initialize_board(game_state_t *game, bint rollout):
 
     pat.clear_pattern(game.pat)
 
-    # Policy Network feature planes
-    policy_feature_planes = np.ndarray((policy_feature_num, pure_board_max), dtype=np.int32)
-    policy_feature_planes[...] = 0
-    # Ones: A constant plane filled with 1
-    policy_feature_planes[3, :] = 1
-
     initialize_neighbor()
     initialize_eye()
+
 
 
 cdef void do_move(game_state_t *game, int pos):
@@ -497,17 +511,24 @@ cdef void get_neighbor4(int neighbor4[4], int pos):
 
 
 cdef void init_board_position():
-    cdef int i, x, y, p
+    cdef int i, x, y, p,
+    cdef int neighbor4[4], n, nx, ny, n_pos, n_size
 
     global onboard_pos, board_x, board_y
+    global neighbor4_num, neighbor4_pos
 
     free(onboard_pos)
     free(board_x)
     free(board_y)
+    free(neighbor4_num)
 
     onboard_pos = <int *>malloc(pure_board_max * sizeof(int))
     board_x = <int *>malloc(board_max * sizeof(int))
     board_y = <int *>malloc(board_max * sizeof(int))
+
+    neighbor4_num = <int *>malloc(board_max * sizeof(int))
+    neighbor4_pos = np.zeros((board_max, 4), dtype=np.int32)
+
     i = 0
     for y in range(board_start, board_end + 1):
         for x in range(board_start, board_end + 1):
@@ -515,6 +536,18 @@ cdef void init_board_position():
             onboard_pos[i] = p
             board_x[p] = x
             board_y[p] = y
+
+            get_neighbor4(neighbor4, p)
+            n_size = 0
+            for n in range(4):
+                n_pos = neighbor4[n]
+                nx = X(n_pos, board_size) 
+                ny = Y(n_pos, board_size)
+                if (board_start <= nx and nx <= board_end and
+                    board_start <= ny and ny <= board_end):
+                    neighbor4_pos[p, n_size] = n_pos
+                    n_size += 1
+            neighbor4_num[p] = n_size
             i += 1
 
 
@@ -897,20 +930,35 @@ cpdef test_playout(int n_playout=1, int move_limit=500):
     cdef int i, n
     cdef char color = S_BLACK
     cdef list empties = []
-    cdef list po_speeds = [], move_speeds = [], policy_feature_speeds = []
-    cdef game_state_t *game
+    cdef list move_speeds = [0]
+    cdef list policy_feature_speeds = [0]
+    cdef list copy_speeds = [0]
+    cdef float total_po_sec
+    cdef list po_overheads = [0]
+    cdef game_state_t *game, *clone
+    cdef policy_feature.policy_feature_t *feature
 
     import itertools
     import random
     import time
 
     set_board_size(19)
+
+    game = allocate_game()
+    clone = allocate_game()
+    feature = policy_feature.allocate_feature()
+
+    ps = time.time()
     for n in range(n_playout):
-        game = allocate_game()
+        poos = time.time()
+
         initialize_board(game, False)
+        policy_feature.initialize_feature(feature)
+
         pos_generator = itertools.product(range(board_start, board_end + 1), repeat=2)
         empties = [POS(p[0], p[1], board_size) for p in pos_generator]
-        ps = time.time()
+
+        po_overheads.append(time.time() - poos)
         for i in range(move_limit):
             if not empties:
                 break
@@ -922,14 +970,24 @@ cpdef test_playout(int n_playout=1, int move_limit=500):
                 move_speeds.append(time.time() - ms)
 
                 Fps = time.time()
-                policy_feature.update(policy_feature_planes, game)
+                policy_feature.update(feature, game)
+                ndarray_planes = np.asarray(feature.planes).reshape((48, 19, 19))
                 policy_feature_speeds.append(time.time() - Fps)
 
-        po_speeds.append(time.time() - ps)
-        printer.print_board(game)
-        free_game(game)
+                Cps = time.time()
+                copy_game(clone, game)
+                copy_speeds.append(time.time() - Cps)
 
-    print("Avg PO. {:.3f} us. ".format(np.mean(po_speeds)*1000**2) +
+        # printer.print_board(game)
+
+    total_po_sec = time.time() - ps - np.sum(po_overheads) - np.sum(policy_feature_speeds) - np.sum(copy_speeds)
+
+    free_game(game)
+    free_game(clone)
+    policy_feature.free_feature(feature)
+
+    print("Avg PO. {:.3f} us. ".format(total_po_sec*1000**2/n_playout) +
           "Avg Move. {:.3f} ns. ".format(np.mean(move_speeds)*1000**3) +
+          "Avg Copy. {:.3f} us. ".format(np.mean(copy_speeds)*1000**2) +
           "Avg Feature Calc (Policy). {:.3f} us. ".format(np.mean(policy_feature_speeds)*1000**2))
 

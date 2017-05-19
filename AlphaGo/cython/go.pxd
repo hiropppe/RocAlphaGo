@@ -24,9 +24,10 @@ cdef extern from "ray.h":
     int PASS
     int RESIGN
     int KOMI
-    int MAX_POLICY_FEATURE
 
     int POS(int x, int y, int board_size)
+    int X(int pos, int board_size)
+    int Y(int pos, int board_size)
     int NORTH(int pos, int board_size)
     int WEST(int pos)
     int EAST(int pos)
@@ -103,6 +104,8 @@ cdef extern from "ray.h":
     unsigned char *nb4_empty
     unsigned char *eye_condition
 
+
+
 cdef int pure_board_size
 cdef int pure_board_max
 
@@ -144,8 +147,9 @@ cdef int *onboard_pos
 cdef int *corner
 cdef int[:, ::1] corner_neighbor
 
-cdef int policy_feature_num
-cdef int[:, ::1] policy_feature_planes
+cdef int *neighbor4_num
+cdef int[:, ::1] neighbor4_pos
+
 
 cdef void fill_n_char (char *arr, int size, char v)
 cdef void fill_n_short (short *arr, int size, short v)
@@ -156,8 +160,8 @@ cdef void set_board_size(int size)
 
 cdef game_state_t *allocate_game()
 cdef void free_game(game_state_t *game)
+cdef void copy_game(game_state_t *dst, game_state_t *src)
 cdef void initialize_board(game_state_t *game, bint rollout)
-
 
 cdef void do_move(game_state_t *game, int pos)
 
