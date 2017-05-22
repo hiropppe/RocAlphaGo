@@ -147,9 +147,6 @@ cdef int *onboard_pos
 cdef int *corner
 cdef int[:, ::1] corner_neighbor
 
-cdef int *neighbor4_num
-cdef int[:, ::1] neighbor4_pos
-
 
 cdef void fill_n_char (char *arr, int size, char v)
 cdef void fill_n_short (short *arr, int size, short v)

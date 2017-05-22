@@ -208,7 +208,7 @@ cdef void put_stone(game_state_t *game, int pos, char color):
 
 
 cdef void connect_string(game_state_t *game, int pos, char color, int connection, int string_id[4]):
-    cdef min_string_id = string_id[0]
+    cdef int min_string_id = string_id[0]
     cdef string_t *string[3]
     cdef int connections = 0
     cdef bint flag = True
@@ -515,19 +515,14 @@ cdef void init_board_position():
     cdef int neighbor4[4], n, nx, ny, n_pos, n_size
 
     global onboard_pos, board_x, board_y
-    global neighbor4_num, neighbor4_pos
 
     free(onboard_pos)
     free(board_x)
     free(board_y)
-    free(neighbor4_num)
 
     onboard_pos = <int *>malloc(pure_board_max * sizeof(int))
     board_x = <int *>malloc(board_max * sizeof(int))
     board_y = <int *>malloc(board_max * sizeof(int))
-
-    neighbor4_num = <int *>malloc(board_max * sizeof(int))
-    neighbor4_pos = np.zeros((board_max, 4), dtype=np.int32)
 
     i = 0
     for y in range(board_start, board_end + 1):
@@ -536,18 +531,6 @@ cdef void init_board_position():
             onboard_pos[i] = p
             board_x[p] = x
             board_y[p] = y
-
-            get_neighbor4(neighbor4, p)
-            n_size = 0
-            for n in range(4):
-                n_pos = neighbor4[n]
-                nx = X(n_pos, board_size) 
-                ny = Y(n_pos, board_size)
-                if (board_start <= nx and nx <= board_end and
-                    board_start <= ny and ny <= board_end):
-                    neighbor4_pos[p, n_size] = n_pos
-                    n_size += 1
-            neighbor4_num[p] = n_size
             i += 1
 
 
@@ -889,10 +872,10 @@ cdef bint is_legal_not_eye(game_state_t *game, int pos, char color):
         return False
 
     if (eye[pat.pat3(game.pat, pos)] != <int>color or
-        game.string[game.string_id[pos.NORTH(pos, board_size)]].libs == 1 or
-        game.string[game.string_id[pos.WEST(pos)]].libs == 1 or
-        game.string[game.string_id[pos.EAST(pos)]].libs == 1 or
-        game.string[game.string_id[pos.SOUTH(pos, board_size)]].libs == 1):
+        game.string[game.string_id[NORTH(pos, board_size)]].libs == 1 or
+        game.string[game.string_id[WEST(pos)]].libs == 1 or
+        game.string[game.string_id[EAST(pos)]].libs == 1 or
+        game.string[game.string_id[SOUTH(pos, board_size)]].libs == 1):
 
         if nb4_empty[pat.pat3(game.pat, pos)] == 0 and is_suicide(game, pos, color):
             return False
@@ -924,7 +907,7 @@ cdef bint is_suicide(game_state_t *game, int pos, char color):
     return True
 
 
-cpdef test_playout(int n_playout=1, int move_limit=500):
+cpdef test_playout(int n_playout=100, int move_limit=500):
     """ benchmark playout speed
     """
     cdef int i, n

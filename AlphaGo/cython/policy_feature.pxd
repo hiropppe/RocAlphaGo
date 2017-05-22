@@ -8,7 +8,7 @@ cdef enum:
 ctypedef struct policy_feature_t:
     int n_planes
     int[:, ::1] planes
-    go.game_state_t *search_game
+    go.game_state_t search_games[80]
 
 
 cdef policy_feature_t *allocate_feature()

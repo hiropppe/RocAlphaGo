@@ -14,14 +14,12 @@ cimport go
 
 cdef policy_feature_t *allocate_feature():
     cdef policy_feature_t *feature
+    cdef int i
 
     feature = <policy_feature_t *>malloc(sizeof(policy_feature_t))
     memset(feature, 0, sizeof(policy_feature_t))
 
     feature.planes = np.zeros((MAX_POLICY_PLANES, go.pure_board_max), dtype=np.int32)
-
-    feature.search_game = go.allocate_game()
-    go.initialize_board(feature.search_game, False)
 
     return feature
 
@@ -31,7 +29,8 @@ cdef void initialize_feature(policy_feature_t *feature):
     # Ones: A constant plane filled with 1
     feature.planes[3, :] = 1
 
-    go.initialize_board(feature.search_game, False)
+    for i in range(80):
+        go.initialize_board(&feature.search_games[i], False)
 
 
 cdef void free_feature(policy_feature_t *feature):
@@ -41,7 +40,6 @@ cdef void free_feature(policy_feature_t *feature):
 
 cdef void update(policy_feature_t *feature, go.game_state_t *game):
     cdef int[:, ::1] F = feature.planes
-    cdef go.game_state_t *search_game = feature.search_game
 
     cdef char current_color = game.current_color
     cdef char other_color = go.FLIP_COLOR(game.current_color)
@@ -52,10 +50,13 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
     cdef go.string_t *string
     cdef go.string_t *nstring
     cdef int capture_size, self_atari_size, libs_after_move
-    cdef int i
+    cdef short ladder_checked[288] # MAX_STRING
+    cdef int i, j
+
+    go.fill_n_short(ladder_checked, 288, 0)
 
     for i in range(go.pure_board_max):
-        capture_size = self_atari_size = 0
+        capture_size = self_atari_size = libs_after_move = 0
         pos = go.onboard_pos[i]
         # Stone colour(3): Player stone(0) / opponent stone(1) / empty(2)
         if color == current_color:
@@ -104,3 +105,57 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
 
                 # Liberties(8): Number of liberties (empty adjacent points)
                 F[12 + go.MIN(string.libs, 8) - 1, pos] = 1
+
+                if not ladder_checked[string_id]:
+                    # Ladder capture(1): Whether a move at this point is a successful ladder capture
+                    if string.libs == 2 and string.color == other_color:
+                        for j in range(2):
+                            if is_ladder_capture(game, string_id, string.lib[j], string.lib[2-j-1], current_color, feature.search_games, 0):
+                                F[44, string.lib[j]] = 1
+                    # Ladder escape(1): Whether a move at this point is a successful ladder escape
+                    elif string.libs == 1 and string.color == current_color:
+                        if is_ladder_escape(game, string.lib[0], current_color, feature.search_games, 0):
+                            F[45, string.lib[0]] = 1
+
+
+cdef bint is_ladder_capture(go.game_state_t *game, int string_id, int pos, int other_pos, char color,
+                            go.game_state_t search_games[80], int depth):
+    cdef go.game_state_t *ladder_game = &search_games[depth]
+    cdef go.string_t *string
+
+    depth += 1
+
+    go.copy_game(ladder_game, game)
+
+    go.do_move(ladder_game, pos)
+
+    string = &ladder_game.string[string_id]
+    if (go.is_legal(ladder_game, other_pos, game.current_color) and
+        is_ladder_escape(ladder_game, other_pos, ladder_game.current_color, search_games, depth)):
+        return False
+    else:
+        return True
+
+
+cdef bint is_ladder_escape(go.game_state_t *game, int pos, char color,
+                           go.game_state_t search_games[80], int depth):
+    cdef go.game_state_t *ladder_game = &search_games[depth]
+    cdef int string_id
+    cdef go.string_t *string
+    cdef int j
+
+    go.copy_game(ladder_game, game)
+
+    go.do_move(ladder_game, pos)
+
+    string_id = ladder_game.string_id[pos]
+    string = &ladder_game.string[string_id]
+
+    if string.libs == 1:
+        return False
+    elif string.libs >= 3:
+        return True
+    else:
+        for j in range(2):
+            if is_ladder_capture(ladder_game, string.lib[j], string.lib[2-j-1], ladder_game.current_color, search_games, depth):
+                return False
