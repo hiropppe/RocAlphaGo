@@ -28,6 +28,8 @@ cdef extern from "ray.h":
     int POS(int x, int y, int board_size)
     int X(int pos, int board_size)
     int Y(int pos, int board_size)
+    int CORRECT_X(int pos, int board_size, int ob_size)
+    int CORRECT_Y(int pos, int board_size, int ob_size)
     int NORTH(int pos, int board_size)
     int WEST(int pos)
     int EAST(int pos)

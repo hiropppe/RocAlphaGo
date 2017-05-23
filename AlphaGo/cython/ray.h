@@ -100,8 +100,8 @@ const int MAX_POLICY_FEATURE = 48;
 #define X(pos, board_size) ((pos) % board_size)
 #define Y(pos, board_size) ((pos) / board_size)
 
-#define CORRECT_X(pos, board_size, ob_size) ((pos) % board_size - ob_size + 1)
-#define CORRECT_Y(pos, board_size, ob_size) ((pos) / board_size - ob_size + 1)
+#define CORRECT_X(pos, board_size, ob_size) ((pos) % board_size - ob_size)
+#define CORRECT_Y(pos, board_size, ob_size) ((pos) / board_size - ob_size)
 
 #define NORTH(pos, board_size) ((pos) - board_size)
 #define WEST(pos) ((pos) - 1)

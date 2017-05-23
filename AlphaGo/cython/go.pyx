@@ -860,8 +860,8 @@ cdef bint is_legal(game_state_t *game, int pos, char color):
     if game.board[pos] != S_EMPTY:
         return False
 
-    if nb4_empty[pat.pat3(game.pat, pos)] == 0 and is_suicide(game, pos, color):
-        return False
+    #if nb4_empty[pat.pat3(game.pat, pos)] == 0 and is_suicide(game, pos, color):
+    #    return False
 
     return True
 
@@ -907,7 +907,7 @@ cdef bint is_suicide(game_state_t *game, int pos, char color):
     return True
 
 
-cpdef test_playout(int n_playout=100, int move_limit=500):
+cpdef test_playout(int n_playout=1, int move_limit=500):
     """ benchmark playout speed
     """
     cdef int i, n
@@ -954,7 +954,7 @@ cpdef test_playout(int n_playout=100, int move_limit=500):
 
                 Fps = time.time()
                 policy_feature.update(feature, game)
-                ndarray_planes = np.asarray(feature.planes).reshape((48, 19, 19))
+                np.asarray(feature.planes).reshape((48, pure_board_size, pure_board_size))
                 policy_feature_speeds.append(time.time() - Fps)
 
                 Cps = time.time()
