@@ -8,6 +8,7 @@ cimport numpy as np
 
 from libc.stdlib cimport malloc, free
 from libc.string cimport memset, memcpy
+from libc.stdint cimport intptr_t
 
 cimport go
 cimport printer
@@ -131,6 +132,12 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
                     elif string.libs == 1 and string.color == current_color:
                         escape_option_num = get_escape_options(game, escape_options, string.lib[0], current_color, string_id)
                         for j in range(escape_option_num):
+                            if is_ladder_escape(game, string_id, escape_options[j], j == escape_option_num - 1, feature.search_games, 0):
+                                ladder_x = go.CORRECT_X(escape_options[j], go.board_size, go.OB_SIZE)
+                                ladder_y = go.CORRECT_Y(escape_options[j], go.board_size, go.OB_SIZE)
+                                F[45, go.POS(ladder_x, ladder_y, go.pure_board_size)] = 1
+                            """
+                            # see break ladder if capture one of neighbors. no additional search
                             if escape_options[j] != string.lib[0]:
                                 ladder_x = go.CORRECT_X(escape_options[j], go.board_size, go.OB_SIZE)
                                 ladder_y = go.CORRECT_Y(escape_options[j], go.board_size, go.OB_SIZE)
@@ -139,7 +146,23 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
                                 ladder_x = go.CORRECT_X(escape_options[j], go.board_size, go.OB_SIZE)
                                 ladder_y = go.CORRECT_Y(escape_options[j], go.board_size, go.OB_SIZE)
                                 F[45, go.POS(ladder_x, ladder_y, go.pure_board_size)] = 1
+                            """
                     ladder_checked[string_id] = True
+
+
+cdef bint has_atari_neighbor(go.game_state_t *game, int string_id, char escape_color):
+    cdef go.string_t *string
+    cdef go.string_t *neighbor
+    cdef int neighbor_id
+
+    string = &game.string[string_id]
+    neighbor_id = string.neighbor[0]
+    while neighbor_id != go.neighbor_end:
+        neighbor = &game.string[neighbor_id]
+        if neighbor.libs == 1 and go.is_legal(game, neighbor.lib[0], escape_color):
+            return True
+        else:
+            neighbor_id = string.neighbor[neighbor_id]
 
 
 cdef int get_escape_options(go.game_state_t *game, int escape_options[4], int atari_pos, int escape_color, int string_id):
@@ -158,6 +181,9 @@ cdef int get_escape_options(go.game_state_t *game, int escape_options[4], int at
             escape_options[escape_options_num] = neighbor.lib[0]
             escape_options_num += 1
         neighbor_id = string.neighbor[neighbor_id]
+        if escape_options_num > 3:
+            print 'Bug. too many atari neighbors', escape_options_num
+            break
 
     escape_options[escape_options_num] = atari_pos
     escape_options_num += 1
@@ -174,24 +200,27 @@ cdef bint is_ladder_capture(go.game_state_t *game, int string_id, int pos, int a
     cdef int escape_options[4]
     cdef int escape_options_num
     cdef int i
-    # print '(', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color, go.is_legal(game, pos, capture_color), go.is_suicide(game, pos, capture_color), depth
-    printer.print_board(game)
-    if not go.is_legal(game, pos, capture_color):
-        printer.print_board(game)
-        print 'Unable to capture !! not legal at (', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color
-        return False
 
     if depth >= 80:
         return False
 
+    # print '(', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color, go.is_legal(game, pos, capture_color), go.is_suicide(game, pos, capture_color), depth
+    # printer.print_board(game)
+    if not go.is_legal(game, pos, capture_color):
+        # printer.print_board(game)
+        # print 'Unable to capture !! not legal at (', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color
+        return False
+
     go.copy_game(ladder_game, game)
     go.do_move(ladder_game, pos)
-
+    """
+    # see break ladder if capture one of neighbors. no additional search
+    return not (has_atari_neighbor(ladder_game, string_id, escape_color) or
+           is_ladder_escape(ladder_game, string_id, atari_pos, True, search_games, depth+1))
+    """
     escape_options_num = get_escape_options(ladder_game, escape_options, atari_pos, escape_color, string_id)
     for i in range(escape_options_num):
-        if escape_options[i] != atari_pos:
-            return False
-        elif is_ladder_escape(ladder_game, string_id, escape_options[i], i == escape_options_num - 1, search_games, depth+1):
+        if is_ladder_escape(ladder_game, string_id, escape_options[i], i == escape_options_num - 1, search_games, depth+1):
             return False
     return True
 
@@ -206,14 +235,15 @@ cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint i
     cdef go.string_t *neighbor_string
     cdef int ladder_capture, ladder_escape
     cdef int j
-    # print '(', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', escape_color, go.is_legal(game, pos, escape_color), go.is_suicide(game, pos, escape_color), depth
-    printer.print_board(game)
-    if not go.is_legal(game, pos, escape_color):
-        printer.print_board(game)
-        print 'Unable to escape !! not legal at (', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color
-        return False
 
     if depth >= 80:
+        return False
+
+    # print '(', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', escape_color, go.is_legal(game, pos, escape_color), go.is_suicide(game, pos, escape_color), depth
+    # printer.print_board(game)
+    if not go.is_legal(game, pos, escape_color):
+        # printer.print_board(game)
+        # print 'Unable to escape !! not legal at (', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color
         return False
 
     go.copy_game(ladder_game, game)
@@ -222,12 +252,12 @@ cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint i
         string_id = ladder_game.string_id[pos]
     string = &ladder_game.string[string_id]
     if string.libs == 1:
-        printer.print_board(ladder_game)
-        print 'Captured !!'
+        # printer.print_board(ladder_game)
+        # print 'Captured !!'
         return False
     elif string.libs >= 3:
-        printer.print_board(ladder_game)
-        print 'Escaped !!'
+        # printer.print_board(ladder_game)
+        # print 'Escaped !!'
         return True
     else:
         for j in range(2):
@@ -239,8 +269,8 @@ cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint i
                 ladder_escape = string.lib[0]
 
             if is_ladder_capture(ladder_game, string_id,
-                                     ladder_capture, ladder_escape,
-                                     search_games, depth+1):
+                                 ladder_capture, ladder_escape,
+                                 search_games, depth+1):
                 return False
 
         return True
