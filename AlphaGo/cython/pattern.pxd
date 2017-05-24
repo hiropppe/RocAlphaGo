@@ -71,3 +71,6 @@ cdef unsigned int pat3_rotate90(unsigned int pat3)
 
 # search pattern
 cdef unsigned int pat3(pattern_t *pat, int pos)
+
+# print pattern
+cdef void print_input_pat3(unsigned int pat3)

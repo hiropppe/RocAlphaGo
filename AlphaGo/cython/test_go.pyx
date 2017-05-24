@@ -4,6 +4,8 @@ from nose.tools import ok_, eq_
 
 cimport go
 cimport printer
+cimport parseboard
+cimport pattern as pat
 
 
 def test_set_board_size_9():
@@ -337,6 +339,29 @@ def test_is_legal_stone_exists():
     ok_(go.is_legal(game, pos, go.S_BLACK) == False)
     ok_(go.is_legal(game, pos, go.S_WHITE) == False)
 
+    go.free_game(game)
+
+
+def test_is_legal_nb4_empty_is_zero():
+    cdef unsigned int pat3
+    game = go.allocate_game()
+    (moves, pure_moves) = parseboard.parse(game,
+                                 ". B . . . . .|"
+                                 "B a B . . . .|"
+                                 ". B . . . . .|"
+                                 ". . . . . . .|"
+                                 ". . . . . . .|"
+                                 ". . . . . . .|"
+                                 ". . . . . . .|")
+
+    game.current_color = go.S_BLACK
+
+    # pat3 = pat.pat3(game.pat, moves['a'])
+    # pat.print_input_pat3(pat3)
+
+    # eq_(go.get_neighbor4_empty(game, moves['a']), 0)
+    # eq_(go.is_suicide(game, moves['a'], go.S_WHITE), True)
+    eq_(go.is_legal(game, moves['a'], go.S_WHITE), False)
     go.free_game(game)
 
 

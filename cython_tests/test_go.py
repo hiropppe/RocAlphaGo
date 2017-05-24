@@ -43,3 +43,5 @@ class TestCBoard(unittest.TestCase):
     def test_is_legal_stone_exists(self):
         test_go.test_is_legal_stone_exists()
 
+    def test_is_legal_nb4_empty_is_zero(self):
+        test_go.test_is_legal_nb4_empty_is_zero()

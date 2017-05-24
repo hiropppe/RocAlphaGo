@@ -2,6 +2,8 @@
 
 from libc.string cimport memset
 
+from libcpp.string cimport string as cppstring
+
 cimport go
 
 
@@ -231,3 +233,14 @@ cdef unsigned int pat3_rotate90(unsigned int pat3):
 
 cdef unsigned int pat3(pattern_t *pat, int pos):
     return (pat[pos].list[<int>MD_2] & 0xFFFF)
+
+
+cdef void print_input_pat3(unsigned int pat3):
+    cdef char stone[4]
+    cdef list buf = []
+    stone = ['+', '@', 'O', '#']
+    buf.append("\n")
+    buf.append("{:s}{:s}{:s}\n".format(cppstring(1, stone[pat3 & 0x3]), cppstring(1, stone[(pat3 >> 2) & 0x3]), cppstring(1, stone[(pat3 >> 4) & 0x3])))
+    buf.append("{:s}*{:s}\n".format(cppstring(1, stone[(pat3 >> 6) & 0x3]), cppstring(1, stone[(pat3 >> 8) & 0x3])))
+    buf.append("{:s}{:s}{:s}\n".format(cppstring(1, stone[(pat3 >> 10) & 0x3]), cppstring(1, stone[(pat3 >> 12) & 0x3]), cppstring(1, stone[(pat3 >> 14) & 0x3])))
+    print ''.join(buf)
