@@ -18,6 +18,7 @@ core.setup(
        "AlphaGo/cython/parseboard.pyx",
        "AlphaGo/cython/test_go.pyx",
        "AlphaGo/cython/test_ladder.pyx",
+       "AlphaGo/cython/test_policy_feature.pyx",
        "AlphaGo/preprocessing/rollout_feature.pyx",
        "AlphaGo/preprocessing/nakade.pyx"],
       language="c++",

@@ -109,7 +109,7 @@ cdef void initialize_board(game_state_t *game, bint rollout):
     memset(game.pat, 0, sizeof(pattern_t) * board_max)
 
     game.current_color = S_BLACK
-    game.moves = 1
+    game.moves = 0
     game.ko_pos = 0
     game.ko_move = 0
     game.pass_count = 0

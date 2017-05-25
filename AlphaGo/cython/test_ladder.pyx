@@ -21,13 +21,11 @@ def test_captured_1():
                              ". . . . . . .|"
                              ". . . . . . .|"
                              ". . . . . W .|")
-
-    game.current_color = go.S_BLACK
-
     feature = policy_feature.allocate_feature()
     policy_feature.initialize_feature(feature)
-
     planes = np.asarray(feature.planes)
+
+    game.current_color = go.S_BLACK
 
     # 'a' should catch white in a ladder, but not 'b'
     policy_feature.update(feature, game)

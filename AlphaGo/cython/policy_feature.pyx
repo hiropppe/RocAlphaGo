@@ -57,6 +57,7 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
     cdef int ladder_capture, ladder_escape, ladder_x, ladder_y
     cdef int escape_options[4]
     cdef int escape_options_num
+    cdef int ladder_moves[0] # workaround. wanna use int pointer
 
     F[...] = 0
     go.fill_n_short(ladder_checked, 288, 0)
@@ -64,6 +65,7 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
     for i in range(go.pure_board_max):
         capture_size = self_atari_size = libs_after_move = 0
         pos = go.onboard_pos[i]
+        color = game.board[pos]
         # Stone colour(3): Player stone(0) / opponent stone(1) / empty(2)
         if color == current_color:
             F[0, i] = 1
@@ -89,7 +91,7 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
                         libs_after_move += (nstring.libs - 1)
                     elif nstring.libs == 1 and nstring.lib[pos] == 0:
                         libs_after_move += 1
-                else:
+                elif game.board[npos] != go.S_OB:
                     libs_after_move += 1
             # Capture size(8): How many opponent stones would be captured
             if capture_size:
@@ -101,7 +103,6 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
             F[36 + go.MIN(libs_after_move, 8) - 1, i] = 1
             F[46, i] = 1
         else:
-            color = game.board[pos]
             if color:
                 string_id = game.string_id[pos]
                 string = &game.string[string_id]
@@ -122,17 +123,33 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
                             else:
                                 ladder_capture = string.lib[string.lib[0]]
                                 ladder_escape = string.lib[0]
-                            if is_ladder_capture(game, string_id,
-                                                 ladder_capture, ladder_escape,
-                                                 feature.search_games, 0):
+                            ladder_moves[0] = 0
+                            if is_ladder_capture(game,
+                                                 string_id,
+                                                 ladder_capture,
+                                                 ladder_escape,
+                                                 feature.search_games,
+                                                 0,
+                                                 ladder_moves):
                                 ladder_x = go.CORRECT_X(ladder_capture, go.board_size, go.OB_SIZE)
                                 ladder_y = go.CORRECT_Y(ladder_capture, go.board_size, go.OB_SIZE)
                                 F[44, go.POS(ladder_x, ladder_y, go.pure_board_size)] = 1
                     # Ladder escape(1): Whether a move at this point is a successful ladder escape
                     elif string.libs == 1 and string.color == current_color:
-                        escape_option_num = get_escape_options(game, escape_options, string.lib[0], current_color, string_id)
+                        escape_option_num = get_escape_options(game,
+                                                               escape_options,
+                                                               string.lib[0],
+                                                               current_color,
+                                                               string_id)
                         for j in range(escape_option_num):
-                            if is_ladder_escape(game, string_id, escape_options[j], j == escape_option_num - 1, feature.search_games, 0):
+                            ladder_moves[0] = 0
+                            if is_ladder_escape(game,
+                                                string_id,
+                                                escape_options[j],
+                                                j == escape_option_num - 1, # is atari-pos
+                                                feature.search_games,
+                                                0,
+                                                ladder_moves):
                                 ladder_x = go.CORRECT_X(escape_options[j], go.board_size, go.OB_SIZE)
                                 ladder_y = go.CORRECT_Y(escape_options[j], go.board_size, go.OB_SIZE)
                                 F[45, go.POS(ladder_x, ladder_y, go.pure_board_size)] = 1
@@ -165,7 +182,11 @@ cdef bint has_atari_neighbor(go.game_state_t *game, int string_id, char escape_c
             neighbor_id = string.neighbor[neighbor_id]
 
 
-cdef int get_escape_options(go.game_state_t *game, int escape_options[4], int atari_pos, int escape_color, int string_id):
+cdef int get_escape_options(go.game_state_t *game,
+                            int escape_options[4],
+                            int atari_pos,
+                            int escape_color,
+                            int string_id):
     cdef go.string_t *string
     cdef go.string_t *neighbor
     cdef int neighbor_id
@@ -181,9 +202,6 @@ cdef int get_escape_options(go.game_state_t *game, int escape_options[4], int at
             escape_options[escape_options_num] = neighbor.lib[0]
             escape_options_num += 1
         neighbor_id = string.neighbor[neighbor_id]
-        if escape_options_num > 3:
-            print 'Bug. too many atari neighbors', escape_options_num
-            break
 
     escape_options[escape_options_num] = atari_pos
     escape_options_num += 1
@@ -191,8 +209,13 @@ cdef int get_escape_options(go.game_state_t *game, int escape_options[4], int at
     return escape_options_num
 
 
-cdef bint is_ladder_capture(go.game_state_t *game, int string_id, int pos, int atari_pos,
-                            go.game_state_t search_games[80], int depth):
+cdef bint is_ladder_capture(go.game_state_t *game,
+                            int string_id,
+                            int pos,
+                            int atari_pos,
+                            go.game_state_t search_games[80],
+                            int depth,
+                            int ladder_moves[1]):
     cdef go.game_state_t *ladder_game = &search_games[depth]
     cdef go.string_t *string
     cdef char capture_color = game.current_color
@@ -201,7 +224,7 @@ cdef bint is_ladder_capture(go.game_state_t *game, int string_id, int pos, int a
     cdef int escape_options_num
     cdef int i
 
-    if depth >= 80:
+    if depth >= 80 or ladder_moves[0] > 200:
         return False
 
     # print '(', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color, go.is_legal(game, pos, capture_color), go.is_suicide(game, pos, capture_color), depth
@@ -211,6 +234,8 @@ cdef bint is_ladder_capture(go.game_state_t *game, int string_id, int pos, int a
         # print 'Unable to capture !! not legal at (', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color
         return False
 
+    ladder_moves[0] += 1
+
     go.copy_game(ladder_game, game)
     go.do_move(ladder_game, pos)
     """
@@ -218,15 +243,30 @@ cdef bint is_ladder_capture(go.game_state_t *game, int string_id, int pos, int a
     return not (has_atari_neighbor(ladder_game, string_id, escape_color) or
            is_ladder_escape(ladder_game, string_id, atari_pos, True, search_games, depth+1))
     """
-    escape_options_num = get_escape_options(ladder_game, escape_options, atari_pos, escape_color, string_id)
+    escape_options_num = get_escape_options(ladder_game,
+                                            escape_options,
+                                            atari_pos,
+                                            escape_color,
+                                            string_id)
     for i in range(escape_options_num):
-        if is_ladder_escape(ladder_game, string_id, escape_options[i], i == escape_options_num - 1, search_games, depth+1):
+        if is_ladder_escape(ladder_game,
+                            string_id,
+                            escape_options[i],
+                            i == escape_options_num - 1, # is atari-pos
+                            search_games,
+                            depth+1,
+                            ladder_moves):
             return False
     return True
 
 
-cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint is_atari_pos,
-                           go.game_state_t search_games[80], int depth):
+cdef bint is_ladder_escape(go.game_state_t *game,
+                           int string_id,
+                           int pos,
+                           bint is_atari_pos,
+                           go.game_state_t search_games[80],
+                           int depth,
+                           int ladder_moves[1]):
     cdef go.game_state_t *ladder_game = &search_games[depth]
     cdef go.string_t *string
     cdef char escape_color = game.current_color
@@ -236,8 +276,8 @@ cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint i
     cdef int ladder_capture, ladder_escape
     cdef int j
 
-    if depth >= 80:
-        return False
+    if depth >= 80 or ladder_moves[0] > 200:
+       return False
 
     # print '(', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', escape_color, go.is_legal(game, pos, escape_color), go.is_suicide(game, pos, escape_color), depth
     # printer.print_board(game)
@@ -245,6 +285,8 @@ cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint i
         # printer.print_board(game)
         # print 'Unable to escape !! not legal at (', go.CORRECT_X(pos, go.board_size, go.OB_SIZE), ',', go.CORRECT_Y(pos, go.board_size, go.OB_SIZE), ')', capture_color
         return False
+
+    ladder_moves[0] += 1
 
     go.copy_game(ladder_game, game)
     go.do_move(ladder_game, pos)
@@ -268,9 +310,13 @@ cdef bint is_ladder_escape(go.game_state_t *game, int string_id, int pos, bint i
                 ladder_capture = string.lib[string.lib[0]]
                 ladder_escape = string.lib[0]
 
-            if is_ladder_capture(ladder_game, string_id,
-                                 ladder_capture, ladder_escape,
-                                 search_games, depth+1):
+            if is_ladder_capture(ladder_game,
+                                 string_id,
+                                 ladder_capture,
+                                 ladder_escape,
+                                 search_games,
+                                 depth+1,
+                                 ladder_moves):
                 return False
 
         return True
