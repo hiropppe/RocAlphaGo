@@ -6,6 +6,18 @@ from libcpp.string cimport string as cppstring
 
 cimport go
 
+N = -go.board_size
+S = go.board_size
+W = 1
+E = -1
+NN = N + N
+NW = N + E
+NE = N + W
+SS = S + S
+SW = S + E
+SE = S + W
+WW = W + W
+EE = E + E
 
 cdef unsigned int update_mask[40][3]
 

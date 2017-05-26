@@ -5,30 +5,33 @@ import numpy
 from setuptools import setup, find_packages
 
 from distutils import core
+from distutils.extension import Extension
+from Cython.Distutils import build_ext
 from Cython.Build import cythonize
 
+
 core.setup(
-  ext_modules=cythonize(
-      ["AlphaGo/cython/go.pyx",
-       "AlphaGo/cython/point.pyx",
-       "AlphaGo/cython/pattern.pyx",
-       "AlphaGo/cython/printer.pyx",
-       "AlphaGo/cython/policy_feature.pyx",
-       "AlphaGo/cython/arrtest.pyx",
-       "AlphaGo/cython/parseboard.pyx",
-       "AlphaGo/cython/test_go.pyx",
-       "AlphaGo/cython/test_ladder.pyx",
-       "AlphaGo/cython/test_policy_feature.pyx",
-       "AlphaGo/preprocessing/rollout_feature.pyx",
-       "AlphaGo/preprocessing/nakade.pyx"],
+  ext_modules=cythonize(Extension(
+      'CyGO',
+      sources=["AlphaGo/cython/go.pyx",
+               "AlphaGo/cython/point.pyx",
+               "AlphaGo/cython/pattern.pyx",
+               "AlphaGo/cython/printer.pyx",
+               "AlphaGo/cython/policy_feature.pyx",
+               "AlphaGo/cython/arrtest.pyx",
+               "AlphaGo/cython/parseboard.pyx",
+               "AlphaGo/cython/test_go.pyx",
+               "AlphaGo/cython/test_ladder.pyx",
+               "AlphaGo/cython/test_policy_feature.pyx",
+               "AlphaGo/preprocessing/rollout_feature.pyx",
+               "AlphaGo/preprocessing/nakade.pyx",
+               ],
       language="c++",
-      extra_compile_args=["-std=c++11"],
-      extra_link_args=["-std=c++11"],
-      gdb_debug=True
-  ),
+      extra_compile_args=["-std=c++11", "-fopenmp"],
+      extra_link_args=["-std=c++11", '-fopenmp'],
+  )),
   include_dirs=[numpy.get_include()]
 )
-
 
 requires = [
 ]

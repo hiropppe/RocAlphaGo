@@ -53,8 +53,6 @@ typedef struct pattern {
   unsigned long long large_list[MD_LARGE_MAX];
 } pattern_t;
 
-int NN, NW, N, NE, WW, W, E, EE, SW, S, SE, SS;
-
 
 /***************
  * UctRating.h *
@@ -203,11 +201,11 @@ typedef struct {
 //int board_x[BOARD_MAX];
 //int board_y[BOARD_MAX];
 
-unsigned char eye[PAT3_MAX];
-unsigned char false_eye[PAT3_MAX];
-unsigned char territory[PAT3_MAX];
-unsigned char nb4_empty[PAT3_MAX];
-unsigned char eye_condition[PAT3_MAX];
+//unsigned char eye[PAT3_MAX];
+//unsigned char false_eye[PAT3_MAX];
+//unsigned char territory[PAT3_MAX];
+//unsigned char nb4_empty[PAT3_MAX];
+//unsigned char eye_condition[PAT3_MAX];
 
 
 /***********

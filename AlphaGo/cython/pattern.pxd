@@ -13,19 +13,6 @@ cdef extern from "ray.h":
     unsigned int REV16(unsigned int p)
     unsigned int REV18(unsigned int p)
 
-    int N
-    int S
-    int W
-    int E
-    int NN
-    int NW
-    int NE
-    int SS
-    int SW
-    int SE
-    int WW
-    int EE
-
     int MD2_MAX
     int PAT3_MAX
     int MD2_LIMIT
@@ -45,6 +32,19 @@ cdef extern from "ray.h":
         unsigned int *list
         unsigned long long *large_list
 
+
+cdef int N
+cdef int S
+cdef int W
+cdef int E
+cdef int NN
+cdef int NW
+cdef int NE
+cdef int SS
+cdef int SW
+cdef int SE
+cdef int WW
+cdef int EE
 
 # init
 cdef void clear_pattern(pattern_t *pat)

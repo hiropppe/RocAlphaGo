@@ -46,7 +46,7 @@ cdef extern from "ray.h":
         S_OB
         S_MAX
 
-    ctypedef enum eye_condition:
+    ctypedef enum eye_condition_e:
         E_NOT_EYE
         E_COMPLETE_HALF_EYE
         E_HALF_3_EYE
@@ -100,13 +100,6 @@ cdef extern from "ray.h":
 
         bint rollout
 
-    unsigned char *eye
-    unsigned char *false_eye
-    unsigned char *territory
-    unsigned char *nb4_empty
-    unsigned char *eye_condition
-
-
 
 cdef int pure_board_size
 cdef int pure_board_max
@@ -148,6 +141,12 @@ cdef int *onboard_pos
 
 cdef int *corner
 cdef int[:, ::1] corner_neighbor
+
+cdef unsigned char eye[65536]           # PAT3_MAX
+cdef unsigned char false_eye[65536]     # PAT3_MAX
+cdef unsigned char territory[65536]     # PAT3_MAX
+cdef unsigned char nb4_empty[65536]     # PAT3_MAX
+cdef unsigned char eye_condition[65536] # PAT3_MAX
 
 
 cdef void fill_n_char (char *arr, int size, char v)

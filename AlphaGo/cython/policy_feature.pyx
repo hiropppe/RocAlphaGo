@@ -57,7 +57,7 @@ cdef void update(policy_feature_t *feature, go.game_state_t *game):
     cdef int ladder_capture, ladder_escape, ladder_x, ladder_y
     cdef int escape_options[4]
     cdef int escape_options_num
-    cdef int ladder_moves[0] # workaround. wanna use int pointer
+    cdef int ladder_moves[1] # workaround. wanna use int pointer
 
     F[...] = 0
     go.fill_n_short(ladder_checked, 288, 0)
