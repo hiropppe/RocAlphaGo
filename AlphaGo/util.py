@@ -14,11 +14,13 @@ RESULT = 'DBW'
 
 
 class TooFewMove(Exception):
-    pass
+    def __init__(self, n_moves):
+        self.n_moves = n_moves
 
 
 class TooManyMove(Exception):
-    pass
+    def __init__(self, n_moves):
+        self.n_moves = n_moves
 
 
 def confirm(prompt=None, resp=False):
