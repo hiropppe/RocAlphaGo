@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 import numpy as np
 from AlphaGo.preprocessing.preprocessing import Preprocess
-from AlphaGo.util import sgf_iter_states
+from AlphaGo.util import sgf_iter_states, TooFewMove, TooManyMove
 import AlphaGo.go as go
 import os
 import warnings
 import sgf
+import sys
+import traceback
 import h5py as h5
 import itertools
 import dill
+
+from tqdm import tqdm
 
 from concurrent.futures import ProcessPoolExecutor
 
@@ -43,7 +47,7 @@ class GameConverter:
                 nn_input = self.feature_processor.state_to_tensor(state)
                 yield (nn_input, move)
 
-    def sgfs_to_hdf5(self, sgf_files, hdf5_file, bd_size=19, ignore_errors=True, verbose=False):
+    def sgfs_to_hdf5(self, sgf_files, n_sgf_files, hdf5_file, bd_size=19, ignore_errors=True, verbose=False):
         """Convert all files in the iterable sgf_files into an hdf5 group to be stored in hdf5_file
 
         Arguments:
@@ -103,6 +107,11 @@ class GameConverter:
                 print("created HDF5 dataset in {}".format(tmp_file))
 
             next_idx = 0
+            n_parse_error = 0
+            n_not19 = 0
+            n_too_few_move = 0
+            n_too_many_move = 0
+            pbar = tqdm(total=n_sgf_files)
             for file_name in sgf_files:
                 if verbose:
                     print(file_name)
@@ -122,9 +131,23 @@ class GameConverter:
                     warnings.warn("Illegal Move encountered in %s\n"
                                   "\tdropping the remainder of the game" % file_name)
                 except sgf.ParseException:
+                    n_parse_error += 1
                     warnings.warn("Could not parse %s\n\tdropping game" % file_name)
+                    if verbose:
+                        err, msg, _ = sys.exc_info()
+                        sys.stderr.write("{} {}\n".format(err, msg))
+                        sys.stderr.write(traceback.format_exc())
                 except SizeMismatchError:
+                    n_not19 += 1
                     warnings.warn("Skipping %s; wrong board size" % file_name)
+                except TooFewMove as e:
+                    n_too_few_move += 1
+                    warnings.warn('Too few move. {:d} less than 50. {:s}'.format(e.n_moves, file_name))
+                except TooManyMove as e:
+                    n_too_many_move += 1
+                    warnings.warn('Too many move. {:d} more than 500. {:s}'.format(e.n_moves, file_name))
+                except KeyboardInterrupt:
+                    break
                 except Exception as e:
                     # catch everything else
                     if ignore_errors:
@@ -133,6 +156,7 @@ class GameConverter:
                     else:
                         raise e
                 finally:
+                    pbar.update(1)
                     if n_pairs > 0:
                         # '/' has special meaning in HDF5 key names, so they
                         # are replaced with ':' here
@@ -296,6 +320,14 @@ def run_game_converter(cmd_line_args=None):
     def _is_sgf(fname):
         return fname.strip()[-4:] == ".sgf"
 
+    def _count_all_sgfs(root):
+        count = 0
+        for (dirpath, dirname, files) in os.walk(root):
+            for filename in files:
+                if _is_sgf(filename):
+                    count += 1
+        return count
+
     def _walk_all_sgfs(root):
         """a helper function/generator to get all SGF files in subdirectories of root
         """
@@ -313,14 +345,16 @@ def run_game_converter(cmd_line_args=None):
 
     # get an iterator of SGF files according to command line args
     if args.directory:
+        n_files = _count_all_sgfs(args.directory)
         if args.recurse:
             files = _walk_all_sgfs(args.directory)
         else:
             files = _list_sgfs(args.directory)
     else:
+        n_files = 1
         files = (f.strip() for f in sys.stdin if _is_sgf(f))
 
-    converter.sgfs_to_hdf5(files, args.outfile, bd_size=args.size, verbose=args.verbose)
+    converter.sgfs_to_hdf5(files, n_files, args.outfile, bd_size=args.size, verbose=args.verbose)
 
 
 if __name__ == '__main__':

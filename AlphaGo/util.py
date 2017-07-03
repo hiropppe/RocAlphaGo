@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import sgf
 import go
+import re
 
 # for board location indexing
 LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -10,6 +11,14 @@ LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 # for ascii board
 CINDX = 'abcdefghjklmnopqrst'
 RESULT = 'DBW'
+
+
+class TooFewMove(Exception):
+    pass
+
+
+class TooManyMove(Exception):
+    pass
 
 
 def confirm(prompt=None, resp=False):
@@ -50,6 +59,15 @@ def flatten_idx(position, size):
 def unflatten_idx(idx, size):
     x, y = divmod(idx, size)
     return (x, y)
+
+
+def min_sgf_extract(sgf_string):
+    size = ''.join(re.findall(r'SZ\[.+?\]', sgf_string, flags=re.IGNORECASE))
+    player = ''.join(re.findall(r'PL\[.+?\]', sgf_string, flags=re.IGNORECASE))
+    kiryoku = ''.join(re.findall(r'[BW]R\[.+?\]', sgf_string, flags=re.IGNORECASE))
+    add_stone = ''.join(re.findall(r'A[BW](?:\[[a-z]+\]\s*)+', sgf_string, flags=re.IGNORECASE))
+    moves = ''.join(re.findall(r';[WB]\[[a-z]+?\]', sgf_string, flags=re.IGNORECASE))
+    return '(;{:s}{:s}{:s}{:s}{:s})'.format(size, player, kiryoku, add_stone, moves)
 
 
 def _parse_sgf_move(node_value):
@@ -143,8 +161,14 @@ def sgf_iter_states(sgf_string, include_end=True):
     iteration because 'gs' is modified in-place the state. See sgf_to_gamestate
 
     """
+    sgf_string = min_sgf_extract(sgf_string)
     collection = sgf.parse(sgf_string)
     game = collection[0]
+    sgf_game = collection[0]
+    if len(sgf_game.nodes) < 50:
+        raise TooFewMove(len(sgf_game.nodes))
+    if len(sgf_game.nodes) > 500:
+        raise TooManyMove(len(sgf_game.nodes))
     gs = _sgf_init_gamestate(game.root)
     if game.rest is not None:
         for node in game.rest:
