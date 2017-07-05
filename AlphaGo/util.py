@@ -68,7 +68,7 @@ def min_sgf_extract(sgf_string):
     player = ''.join(re.findall(r'PL\[.+?\]', sgf_string, flags=re.IGNORECASE))
     kiryoku = ''.join(re.findall(r'[BW]R\[.+?\]', sgf_string, flags=re.IGNORECASE))
     add_stone = ''.join(re.findall(r'A[BW](?:\[[a-z]+\]\s*)+', sgf_string, flags=re.IGNORECASE))
-    moves = ''.join(re.findall(r';[WB]\[[a-z]+?\]', sgf_string, flags=re.IGNORECASE))
+    moves = ''.join(re.findall(r';[WB]\[[a-z]*?\]', sgf_string, flags=re.IGNORECASE))
     return '(;{:s}{:s}{:s}{:s}{:s})'.format(size, player, kiryoku, add_stone, moves)
 
 
@@ -181,9 +181,9 @@ def sgf_iter_states(sgf_string, include_end=True):
             elif 'B' in props:
                 move = _parse_sgf_move(props['B'][0])
                 player = go.BLACK
-            yield (gs, move, player)
             # update state to n+1
             gs.do_move(move, player)
+            yield (gs, move, player)
     if include_end:
         yield (gs, None, None)
 
