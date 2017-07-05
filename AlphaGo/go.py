@@ -221,9 +221,10 @@ class GameState(object):
         other.liberty_counts = self.liberty_counts.copy()
         return other
 
-    def is_suicide(self, action):
+    def is_suicide(self, action, color=None):
         """return true if having current_player play at <action> would be suicide
         """
+        color = color or self.current_player
         (x, y) = action
         num_liberties_here = len(self.liberty_sets[x][y])
         if num_liberties_here == 0:
@@ -232,12 +233,12 @@ class GameState(object):
             for (nx, ny) in self._neighbors(action):
                 # check if we're saved by attaching to a friendly group that has
                 # liberties elsewhere
-                is_friendly_group = self.board[nx, ny] == self.current_player
+                is_friendly_group = self.board[nx, ny] == color
                 group_has_other_liberties = len(self.liberty_sets[nx][ny] - set([action])) > 0
                 if is_friendly_group and group_has_other_liberties:
                     return False
                 # check if we're killing an unfriendly group
-                is_enemy_group = self.board[nx, ny] == -self.current_player
+                is_enemy_group = self.board[nx, ny] == -color
                 if is_enemy_group and (not group_has_other_liberties):
                     return False
             # checked all the neighbors, and it doesn't look good.
@@ -269,7 +270,7 @@ class GameState(object):
         else:
             return False
 
-    def is_legal(self, action):
+    def is_legal(self, action, color=None):
         """determine if the given action (x,y tuple) is a legal move
         note: we only check ko, not superko at this point (TODO?)
         """
@@ -281,7 +282,7 @@ class GameState(object):
             return False
         if self.board[x][y] != EMPTY:
             return False
-        if self.is_suicide(action):
+        if self.is_suicide(action, color):
             return False
         if action == self.ko:
             return False
