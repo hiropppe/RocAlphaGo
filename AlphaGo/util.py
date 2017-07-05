@@ -151,7 +151,7 @@ def save_gamestate_to_sgf(gamestate, path, filename, black_player_name='Unknown'
         f.write(''.join(str_list))
 
 
-def sgf_iter_states(sgf_string, include_end=True):
+def sgf_iter_states(sgf_string, include_end=True, ignore_not_legal=False):
     """Iterates over (GameState, move, player) tuples in the first game of the given SGF file.
 
     Ignores variations - only the main line is returned.  The state object is
@@ -181,9 +181,15 @@ def sgf_iter_states(sgf_string, include_end=True):
             elif 'B' in props:
                 move = _parse_sgf_move(props['B'][0])
                 player = go.BLACK
-            # update state to n+1
-            gs.do_move(move, player)
             yield (gs, move, player)
+            # update state to n+1
+            try:
+                gs.do_move(move, player)
+            except go.IllegalMove:
+                if ignore_not_legal:
+                    pass
+                else:
+                    raise
     if include_end:
         yield (gs, None, None)
 
