@@ -84,13 +84,14 @@ def _parse_sgf_move(node_value):
         return (col, row)
 
 
-def _sgf_init_gamestate(sgf_root):
+def _sgf_init_gamestate(game):
     """Helper function to set up a GameState object from the root node
     of an SGF file
     """
+    sgf_root = game.root
     props = sgf_root.properties
     s_size = props.get('SZ', ['19'])[0]
-    s_player = props.get('PL', ['B'])[0]
+    #s_player = props.get('PL', ['B'])[0]
     # init board with specified size
     gs = go.GameState(int(s_size))
     # handle 'add black' property
@@ -102,7 +103,17 @@ def _sgf_init_gamestate(sgf_root):
         for stone in props['AW']:
             gs.do_move(_parse_sgf_move(stone), go.WHITE)
     # setup done; set player according to 'PL' property
-    gs.current_player = go.BLACK if s_player == 'B' else go.WHITE
+    # gs.current_player = go.BLACK if s_player == 'B' else go.WHITE
+    # setup done; set player according to first move
+    if game.rest is not None:
+        for node in game.rest:
+            props = node.properties
+            if 'W' in props:
+                gs.current_player = go.WHITE
+                break
+            elif 'B' in props:
+                gs.current_player = go.BLACK
+                break
     return gs
 
 
@@ -166,12 +177,11 @@ def sgf_iter_states(sgf_string, include_end=True, ignore_not_legal=False):
     sgf_string = min_sgf_extract(sgf_string)
     collection = sgf.parse(sgf_string)
     game = collection[0]
-    sgf_game = collection[0]
-    if len(sgf_game.nodes) < 50:
-        raise TooFewMove(len(sgf_game.nodes))
-    if len(sgf_game.nodes) > 500:
-        raise TooManyMove(len(sgf_game.nodes))
-    gs = _sgf_init_gamestate(game.root)
+    if len(game.nodes) < 50:
+        raise TooFewMove(len(game.nodes))
+    if len(game.nodes) > 500:
+        raise TooManyMove(len(game.nodes))
+    gs = _sgf_init_gamestate(game)
     if game.rest is not None:
         for node in game.rest:
             props = node.properties
@@ -181,6 +191,7 @@ def sgf_iter_states(sgf_string, include_end=True, ignore_not_legal=False):
             elif 'B' in props:
                 move = _parse_sgf_move(props['B'][0])
                 player = go.BLACK
+            gs.current_player = player
             yield (gs, move, player)
             # update state to n+1
             try:
