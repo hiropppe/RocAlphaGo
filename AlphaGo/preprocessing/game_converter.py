@@ -11,6 +11,7 @@ import traceback
 import h5py as h5
 import itertools
 import dill
+import time
 
 from tqdm import tqdm
 
@@ -26,6 +27,7 @@ class GameConverter:
     def __init__(self, features):
         self.feature_processor = Preprocess(features)
         self.n_features = self.feature_processor.output_dim
+        self.feature_calculation_speeds = []
 
     def convert_game(self, file_name, bd_size):
         """Read the given SGF file into an iterable of (input,output) pairs
@@ -44,7 +46,9 @@ class GameConverter:
             if state.size != bd_size:
                 raise SizeMismatchError()
             if move != go.PASS_MOVE:
+                s = time.time()
                 nn_input = self.feature_processor.state_to_tensor(state)
+                self.feature_calculation_speeds.append(time.time()-s)
                 yield (nn_input, move)
 
     def sgfs_to_hdf5(self, sgf_files, n_sgf_files, hdf5_file, bd_size=19, ignore_errors=True, verbose=False):
@@ -173,6 +177,8 @@ class GameConverter:
 
         if verbose:
             print("finished. renaming %s to %s" % (tmp_file, hdf5_file))
+
+        print('Feature Calculation Speed: Avg. {:3f} us'.format(np.mean(self.feature_calculation_speeds)*1000*1000))
 
         # processing complete; rename tmp_file to hdf5_file
         h5f.close()
